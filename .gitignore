@@ -1,0 +1,6 @@
+﻿# Binance Futures Monitor
+.env
+__pycache__/
+*.pyc
+logs/
+*.log

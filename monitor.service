@@ -1,0 +1,16 @@
+[Unit]
+Description=Gate.io Futures Pump & OI Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gate-monitor
+ExecStart=/usr/bin/python3 /opt/gate-monitor/main.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/gate-monitor/logs/monitor.log
+StandardError=append:/opt/gate-monitor/logs/monitor.log
+
+[Install]
+WantedBy=multi-user.target
