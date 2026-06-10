@@ -30,11 +30,18 @@ class GateFuturesFetcher:
     def _load_binance_symbols(self) -> Set[str]:
         symbols = set()
         if os.path.exists(BINANCE_SYMBOLS_FILE):
-            with open(BINANCE_SYMBOLS_FILE, "r") as f:
-                for line in f:
-                    sym = line.strip()
-                    if sym:
-                        symbols.add(sym)
+            try:
+                with open(BINANCE_SYMBOLS_FILE, "r", encoding="utf-8") as f:
+                    for line in f:
+                        sym = line.strip()
+                        if sym:
+                            symbols.add(sym)
+            except UnicodeDecodeError:
+                with open(BINANCE_SYMBOLS_FILE, "r", encoding="gbk") as f:
+                    for line in f:
+                        sym = line.strip()
+                        if sym:
+                            symbols.add(sym)
             logger.info(f"Loaded {len(symbols)} Binance USDT perpetual symbols")
         else:
             logger.warning(f"Binance symbols file not found: {BINANCE_SYMBOLS_FILE}")
