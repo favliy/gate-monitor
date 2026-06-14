@@ -89,8 +89,6 @@ class GateFuturesFetcher:
             if binance_sym not in self._binance_symbols:
                 continue
             volume = float(t.get("volume_24h_quote", 0))
-            if contract in ('BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'BNB_USDT', 'XRP_USDT', 'DOGE_USDT', 'ADA_USDT', 'AVAX_USDT', 'DOT_USDT', 'LINK_USDT', 'MATIC_USDT', 'TRX_USDT', 'LTC_USDT', 'ATOM_USDT', 'UNI_USDT', 'OKB_USDT', 'GT_USDT', 'APT_USDT', 'ARB_USDT', 'OP_USDT', 'NEAR_USDT', 'FIL_USDT', 'ETC_USDT', 'INJ_USDT', 'TIA_USDT', 'SUI_USDT', 'SEI_USDT', 'ZEC_USDT', 'HYPE_USDT', 'TAO_USDT', 'ICP_USDT', 'TON_USDT', 'XAUT_USDT'):
-                continue
             if volume < 4500000:
                 continue
             tickers[contract] = {

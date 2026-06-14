@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 class WhaleMonitor:
     """Detect whale/manipulation signals from Gate.io public APIs."""
 
+    # Mainstream / platform / stablecoins excluded from whale scan
+    _EXCLUDE = {
+        "BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT", "XRP_USDT",
+        "DOGE_USDT", "ADA_USDT", "AVAX_USDT", "DOT_USDT", "LINK_USDT",
+        "MATIC_USDT", "TRX_USDT", "LTC_USDT", "ATOM_USDT", "UNI_USDT",
+        "OKB_USDT", "GT_USDT", "APT_USDT", "ARB_USDT", "OP_USDT",
+        "NEAR_USDT", "FIL_USDT", "ETC_USDT", "INJ_USDT", "TIA_USDT",
+        "SUI_USDT", "SEI_USDT", "ZEC_USDT", "HYPE_USDT", "TAO_USDT",
+        "ICP_USDT", "TON_USDT", "XAUT_USDT",
+    }
+
     STATS_URL = "https://api.gateio.ws/api/v4/futures/usdt/contract_stats"
     ORDERBOOK_URL = "https://api.gateio.ws/api/v4/futures/usdt/order_book"
     TRADES_URL = "https://api.gateio.ws/api/v4/futures/usdt/trades"
@@ -137,7 +148,7 @@ class WhaleMonitor:
         now = time.time()
         results = {"funding": [], "depth": [], "oi_div": [], "large_trades": []}
 
-        syms = sorted(tickers.keys(),
+        syms = sorted([s for s in tickers if s not in self._EXCLUDE],
                       key=lambda s: tickers[s].get("volume", 0), reverse=True)[:25]
 
         for sym in syms:
