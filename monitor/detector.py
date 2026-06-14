@@ -6,6 +6,8 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
+FIVE_MIN_THRESHOLD = 3.5
+
 
 class PumpDetector:
     """Detect pumps: symbols that rose > threshold_pct within 1 minute."""
@@ -14,6 +16,7 @@ class PumpDetector:
         self.threshold_pct = threshold_pct
         self._price_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_pumps: Dict[str, dict] = {}
+        self._current_5m_pumps: Dict[str, dict] = {}
 
     def update_prices(self, tickers: dict):
         now = time.time()
@@ -61,6 +64,42 @@ class PumpDetector:
         pumps.sort(key=lambda x: x["pump_pct"], reverse=True)
         return pumps
 
+    def check_5m_pumps(self, tickers: dict) -> List[dict]:
+        """Detect 5-minute candle pumps > 3.5%."""
+        now = time.time()
+        pumps = []
+        for sym, info in tickers.items():
+            current_price = info.get("price", 0)
+            if current_price <= 0:
+                continue
+            history = self._price_history.get(sym, [])
+            if len(history) < 2:
+                continue
+            target_ts = now - 300
+            price_5m_ago = None
+            for ts, p in reversed(history):
+                if ts <= target_ts:
+                    price_5m_ago = p
+                    break
+            if price_5m_ago is None or price_5m_ago <= 0:
+                continue
+            pump_pct = ((current_price - price_5m_ago) / price_5m_ago) * 100
+            if pump_pct >= FIVE_MIN_THRESHOLD:
+                event = {
+                    "symbol": sym,
+                    "pump_pct": round(pump_pct, 2),
+                    "current_price": current_price,
+                    "price_5m_ago": round(price_5m_ago, 6),
+                    "volume": info.get("volume", 0),
+                    "timestamp": now,
+                    "time_str": datetime.now().strftime("%H:%M:%S"),
+                    "type": "5m",
+                }
+                pumps.append(event)
+                self._current_5m_pumps[sym] = event
+        pumps.sort(key=lambda x: x["pump_pct"], reverse=True)
+        return pumps
+
     def get_current_window_pumps(self) -> List[dict]:
         pumps = list(self._current_pumps.values())
         pumps.sort(key=lambda x: x["pump_pct"], reverse=True)
@@ -83,6 +122,7 @@ class PumpDetector:
 
     def reset_window(self):
         self._current_pumps.clear()
+        self._current_5m_pumps.clear()
 
 
 class DumpDetector:
@@ -92,6 +132,7 @@ class DumpDetector:
         self.threshold_pct = threshold_pct
         self._price_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_dumps: Dict[str, dict] = {}
+        self._current_5m_dumps: Dict[str, dict] = {}
 
     def update_prices(self, tickers: dict):
         now = time.time()
@@ -139,6 +180,42 @@ class DumpDetector:
         dumps.sort(key=lambda x: x["drop_pct"])
         return dumps
 
+    def check_5m_dumps(self, tickers: dict) -> List[dict]:
+        """Detect 5-minute candle dumps > 3.5%."""
+        now = time.time()
+        dumps = []
+        for sym, info in tickers.items():
+            current_price = info.get("price", 0)
+            if current_price <= 0:
+                continue
+            history = self._price_history.get(sym, [])
+            if len(history) < 2:
+                continue
+            target_ts = now - 300
+            price_5m_ago = None
+            for ts, p in reversed(history):
+                if ts <= target_ts:
+                    price_5m_ago = p
+                    break
+            if price_5m_ago is None or price_5m_ago <= 0:
+                continue
+            drop_pct = ((current_price - price_5m_ago) / price_5m_ago) * 100
+            if drop_pct <= -FIVE_MIN_THRESHOLD:
+                event = {
+                    "symbol": sym,
+                    "drop_pct": round(drop_pct, 2),
+                    "current_price": current_price,
+                    "price_5m_ago": round(price_5m_ago, 6),
+                    "volume": info.get("volume", 0),
+                    "timestamp": now,
+                    "time_str": datetime.now().strftime("%H:%M:%S"),
+                    "type": "5m",
+                }
+                dumps.append(event)
+                self._current_5m_dumps[sym] = event
+        dumps.sort(key=lambda x: x["drop_pct"])
+        return dumps
+
     def get_current_window_dumps(self) -> List[dict]:
         dumps = list(self._current_dumps.values())
         dumps.sort(key=lambda x: x["drop_pct"])
@@ -146,6 +223,7 @@ class DumpDetector:
 
     def reset_window(self):
         self._current_dumps.clear()
+        self._current_5m_dumps.clear()
 
 
 class OIDetector:
