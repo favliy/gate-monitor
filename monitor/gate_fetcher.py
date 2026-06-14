@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 import threading
 import time
@@ -89,6 +89,8 @@ class GateFuturesFetcher:
             if binance_sym not in self._binance_symbols:
                 continue
             volume = float(t.get("volume_24h_quote", 0))
+            if contract in ('BTC_USDT', 'ETH_USDT', 'SOL_USDT'):
+                continue
             if volume < 4500000:
                 continue
             tickers[contract] = {
