@@ -7,17 +7,16 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
-from datetime import datetime
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    PUMP_THRESHOLD_PCT, REPORT_INTERVAL_MINUTES, CHECK_INTERVAL_SECONDS,
+    PUMP_THRESHOLD_PCT, CHECK_INTERVAL_SECONDS,
 )
 from monitor.gate_fetcher import GateFuturesFetcher
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
-from monitor.reporter import format_report, format_console
+from monitor.reporter import format_console
 from monitor.telegram_sender import TelegramSender
 from monitor.trading_signal import TradingSignalEngine
 from monitor.whale_monitor import WhaleMonitor
@@ -168,9 +167,7 @@ class MonitorApp:
         self.whale_monitor = WhaleMonitor()
         self.health_guard = HealthGuard(self)
         self._running = True
-        self._window_start = datetime.now()
         self._window_start_ts = time.time()
-        self._last_report_time = time.time()
         self._last_oi_fetch_time = 0
         self._last_whale_scan = 0
         self._last_pump_alert = {}
@@ -238,9 +235,7 @@ class MonitorApp:
 
         self.health_guard.start()
 
-        self._window_start = datetime.now()
         self._window_start_ts = time.time()
-        self._last_report_time = time.time()
         self._price_snapshot = {}
 
         logger.info("Monitoring started.")
@@ -344,52 +339,6 @@ class MonitorApp:
 
                     self._last_whale_scan = now
 
-                # ── 5min report ──
-                if now - self._last_report_time >= REPORT_INTERVAL_MINUTES * 60:
-                    pumps_win = self.pump_detector.get_current_window_pumps()
-                    dumps_win = self.dump_detector.get_current_window_dumps()
-                    oi_win = self.oi_detector.get_current_window_spikes()
-
-                    for p in pumps_win:
-                        p["detect_count"] = self._pump_counts.get(p["symbol"], 0)
-                        snap = self._price_snapshot.get(p["symbol"], p["current_price"])
-                        chg = round(((p["current_price"] - snap)/snap*100), 1) if snap else 0
-                        p["change_5m"] = chg
-                        p["signal"] = self.signal_engine.analyze_long(
-                            p["symbol"], p["current_price"], p["pump_pct"],
-                            chg, p.get("volume", 0))
-                    for d in dumps_win:
-                        d["detect_count"] = self._dump_counts.get(d["symbol"], 0)
-                        snap = self._price_snapshot.get(d["symbol"], d["current_price"])
-                        chg = round(((d["current_price"] - snap)/snap*100), 1) if snap else 0
-                        d["change_5m"] = chg
-                        d["signal"] = self.signal_engine.analyze_short(
-                            d["symbol"], d["current_price"], abs(d["drop_pct"]),
-                            chg, d.get("volume", 0))
-                    for s in oi_win:
-                        s["detect_count"] = self._oi_counts.get(s["symbol"], 0)
-                        curr = tickers.get(s["symbol"], {}).get("price", 0)
-                        snap = self._price_snapshot.get(s["symbol"], curr)
-                        s["change_5m"] = round(((curr-snap)/snap*100), 1) if snap and curr else 0
-
-                    report = format_report(pumps_win, dumps_win, oi_win,
-                                           self._window_start, datetime.now())
-                    if report:
-                        try: print(report)
-                        except: pass
-                        print()
-                        self._send_alert(report)
-
-                    self._last_report_time = now
-                    self._window_start = datetime.now()
-                    self._window_start_ts = now
-                    self._price_snapshot = {}
-                    self.pump_detector.reset_window()
-                    self.dump_detector.reset_window()
-                    self.oi_detector.reset_window()
-                    self._pump_counts.clear()
-                    self._dump_counts.clear()
-                    self._oi_counts.clear()
 
             except KeyboardInterrupt:
                 break
