@@ -18,7 +18,6 @@ from monitor.gate_fetcher import GateFuturesFetcher
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
 from monitor.reporter import format_console
 from monitor.telegram_sender import TelegramSender
-from monitor.trading_signal import TradingSignalEngine
 from monitor.whale_monitor import WhaleMonitor
 
 logging.basicConfig(
@@ -124,7 +123,6 @@ class MonitorApp:
         self.pump_detector = PumpDetector(threshold_pct=PUMP_THRESHOLD_PCT)
         self.dump_detector = DumpDetector(threshold_pct=PUMP_THRESHOLD_PCT)
         self.oi_detector = OIDetector()
-        self.signal_engine = TradingSignalEngine()
         self.telegram = TelegramSender(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         self.whale_monitor = WhaleMonitor()
         self.health_guard = HealthGuard(self)
@@ -149,31 +147,6 @@ class MonitorApp:
 
     # ── 1min pump/dump formatter ────────────────────────────────
 
-    def _fmt_signal(self, sig):
-        d = sig["direction"]
-        e = "📈" if d == "LONG" else "📉"
-        s = "拉升" if d == "LONG" else "下跌"
-        pm = {"HEAVY": "重仓", "MEDIUM": "中等", "LIGHT": "轻仓", "WATCH": "观望"}
-
-        parts = [f"{e} *{sig['symbol']}｜1min{s} {sig['pump_1m']}%*",
-                 f"📊 {sig['price']}｜量{sig['vol_m']}M"]
-
-        if d == "LONG":
-            parts.append(f"支撑{sig['support']}｜压力{sig['resistance']}")
-        else:
-            parts.append(f"压力{sig['support']}｜支撑{sig['resistance']}")
-
-        if sig.get("can_enter"):
-            parts.append(f"🎯 入场{sig['pullback_entry']} 止损{sig['sl']}(-{sig['sl_pct']}%)")
-            tps = " > ".join([f"TP{i+1}{t['price']}(+{t['pct']}%)" for i, t in enumerate(sig["tp"])])
-            parts.append(f"止盈：{tps}")
-            parts.append(f"⚙️ {pm.get(sig['position'],'')}({sig['size_pct']}%) RR1:{sig['rr']}｜⭐{sig['score']}")
-        else:
-            parts.append(f"⏳ 待确认｜⭐{sig['score']}")
-
-        return "\n".join(parts)
-
-    # ── Whale batch formatter ───────────────────────────────────
 
     def _fmt_whale_batch(self, results):
         """Batch all whale signals into one clean message."""
@@ -257,26 +230,26 @@ class MonitorApp:
                     if now - self._last_pump.get(sym, 0) < DEDUP_SECONDS:
                         continue
                     self._last_pump[sym] = now
-                    snap = self._price_snap.get(sym, p["current_price"])
-                    chg_5m = round(((p["current_price"] - snap) / snap * 100), 1) if snap else 0
-                    sig = self.signal_engine.analyze_long(
-                        sym, p["current_price"], p["pump_pct"],
-                        chg_5m, p.get("volume", 0))
-                    self._send(self._fmt_signal(sig))
-                    logger.info(f"PUMP {sym} +{round(p['pump_pct'],2)}%")
+                    vol_m = p.get("volume", 0) / 1_000_000
+                    msg = (
+                        "📈 *" + sym + " 拉升 +" + str(round(p["pump_pct"],1)) + "%*
+"
+                        "📊 价格 " + str(p["current_price"]) + " | 1min +" + str(round(p["pump_pct"],1)) + "% | 量 " + f"{vol_m:.0f}" + "M"
+                    )
+                    self._send(msg)
 
                 for d in dumps:
                     sym = d["symbol"]
                     if now - self._last_dump.get(sym, 0) < DEDUP_SECONDS:
                         continue
                     self._last_dump[sym] = now
-                    snap = self._price_snap.get(sym, d["current_price"])
-                    chg_5m = round(((d["current_price"] - snap) / snap * 100), 1) if snap else 0
-                    sig = self.signal_engine.analyze_short(
-                        sym, d["current_price"], abs(d["drop_pct"]),
-                        chg_5m, d.get("volume", 0))
-                    self._send(self._fmt_signal(sig))
-                    logger.info(f"DUMP {sym} {round(d['drop_pct'],2)}%")
+                    vol_m = d.get("volume", 0) / 1_000_000
+                    msg = (
+                        "📉 *" + sym + " 下跌 " + str(round(d["drop_pct"],1)) + "%*
+"
+                        "📊 价格 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"],1)) + "% | 量 " + f"{vol_m:.0f}" + "M"
+                    )
+                    self._send(msg)
 
                 if pumps or dumps:
                     format_console(pumps)
