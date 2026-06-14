@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import os
 import threading
 import time
@@ -89,7 +89,7 @@ class GateFuturesFetcher:
             if binance_sym not in self._binance_symbols:
                 continue
             volume = float(t.get("volume_24h_quote", 0))
-            if volume < 3000000:
+            if volume < 4500000:
                 continue
             tickers[contract] = {
                 "price": float(t.get("last", 0)),
@@ -101,7 +101,7 @@ class GateFuturesFetcher:
             }
             matched += 1
 
-        logger.info(f"{matched} Binance-listed contracts (vol >= 3M USDT)")
+        logger.info(f"{matched} Binance-listed contracts (vol >= 4.5M USDT)")
         return tickers
 
     def _fetch_prices(self) -> dict:

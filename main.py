@@ -5,6 +5,7 @@ import time
 import io
 import os
 import threading
+import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
 from datetime import datetime
@@ -13,10 +14,11 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    PUMP_THRESHOLD_PCT, CHECK_INTERVAL_SECONDS,
+    PUMP_THRESHOLD_PCT, REPORT_INTERVAL_MINUTES, CHECK_INTERVAL_SECONDS,
 )
 from monitor.gate_fetcher import GateFuturesFetcher
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
+from monitor.reporter import format_report, format_console
 from monitor.telegram_sender import TelegramSender
 from monitor.trading_signal import TradingSignalEngine
 
@@ -31,7 +33,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DEDUP_SECONDS = 300
-DEDUP_5M_SECONDS = 600
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -59,6 +60,7 @@ class HealthGuard:
         self.app = app
         self._running = False
         self._thread = None
+        # Tracking
         self.last_data_ts = time.time()
         self.last_ticker_count = 0
         self.consecutive_stale = 0
@@ -67,6 +69,7 @@ class HealthGuard:
         self.tg_reconnects = 0
         self.total_errors = 0
         self._last_health_report = 0
+        # Thresholds
         self.STALE_DATA_SECONDS = 120
         self.MAX_STALE_CYCLES = 3
         self.CHECK_INTERVAL = 30
@@ -135,13 +138,13 @@ class HealthGuard:
         hours = uptime // 3600
         mins = (uptime % 3600) // 60
         lines = [
-            "\U0001fa78 *系统健康报告*",
+            "🩺 *系统健康报告*",
             f"运行时间：{hours}h {mins}m",
             f"监控合约：{self.last_ticker_count}",
             f"数据断流恢复：{self.fetcher_restarts}次",
             f"TG重连：{self.tg_reconnects}次",
             f"累计异常：{self.total_errors}次",
-            f"状态：{'正常' if self.consecutive_stale == 0 else '\u26a0\ufe0f异常'}",
+            f"状态：{'正常' if self.consecutive_stale == 0 else '⚠️异常'}",
         ]
         self.app._send_alert("\n".join(lines))
 
@@ -151,6 +154,7 @@ class HealthGuard:
                 time.sleep(self.CHECK_INTERVAL)
                 now = time.time()
 
+                # 1) Stale data check
                 stale_seconds = now - self.last_data_ts
                 if stale_seconds > self.STALE_DATA_SECONDS:
                     self.consecutive_stale += 1
@@ -164,17 +168,20 @@ class HealthGuard:
                 else:
                     self.consecutive_stale = 0
 
+                # 2) Telegram health check
                 if self.consecutive_tg_fails >= 5:
                     logger.warning(f"[HealthGuard] {self.consecutive_tg_fails} consecutive TG failures — reconnecting")
                     self._reconnect_telegram()
 
+                # 3) Check ticker count anomaly (sudden drop > 50%)
                 current_count = len(self.app.fetcher.get_all_tickers())
                 if self.last_ticker_count > 0 and current_count > 0:
                     if current_count < self.last_ticker_count * 0.5:
                         logger.warning(
-                            f"[HealthGuard] Ticker count dropped {self.last_ticker_count}→{current_count}"
+                            f"[HealthGuard] Ticker count dropped {self.last_ticker_count}→{current_count} — may need restart"
                         )
 
+                # 4) Hourly health report
                 self._send_health_report()
 
             except Exception as e:
@@ -203,16 +210,17 @@ class MonitorApp:
         )
         self.health_guard = HealthGuard(self)
         self._running = True
+        self._window_start = datetime.now()
         self._window_start_ts = time.time()
+        self._last_report_time = time.time()
         self._last_oi_fetch_time = 0
         self._last_pump_alert = {}
         self._last_dump_alert = {}
-        self._last_5m_pump_alert = {}
-        self._last_5m_dump_alert = {}
         self._pump_counts = defaultdict(int)
         self._dump_counts = defaultdict(int)
-        self._5m_pump_counts = defaultdict(int)
-        self._5m_dump_counts = defaultdict(int)
+        self._oi_counts = defaultdict(int)
+        self._price_snapshot = {}
+        self._tg_ok = False
 
     def _send_alert(self, text):
         if self.telegram.enabled and text:
@@ -229,8 +237,8 @@ class MonitorApp:
     def run(self):
         logger.info("=" * 50)
         logger.info("  Gate.io Futures Monitor")
-        logger.info("  1min Pump/Dump >= " + str(PUMP_THRESHOLD_PCT) + "% | 5min >= 3.5%")
-        logger.info("  Volume >= 3M USDT | HealthGuard: ON")
+        logger.info("  Pump/Dump >= " + str(PUMP_THRESHOLD_PCT) + "% 1min | OI >= 5% 5min")
+        logger.info("  HealthGuard: auto-heal enabled")
         logger.info("=" * 50)
 
         self.fetcher.start()
@@ -242,7 +250,10 @@ class MonitorApp:
 
         self.health_guard.start()
 
+        self._window_start = datetime.now()
         self._window_start_ts = time.time()
+        self._last_report_time = time.time()
+        self._price_snapshot = {}
 
         logger.info("Monitoring started.")
 
@@ -258,12 +269,15 @@ class MonitorApp:
 
                 self.health_guard.feed_data()
 
-                # Update price history for both detectors
+                if not self._price_snapshot:
+                    for sym, info in tickers.items():
+                        self._price_snapshot[sym] = info.get("price", 0)
+
                 self.pump_detector.update_prices(tickers)
                 self.dump_detector.update_prices(tickers)
-
-                # ---- 1-minute pump detection ----
                 pumps = self.pump_detector.check_pumps(tickers)
+                dumps = self.dump_detector.check_dumps(tickers)
+
                 for p in pumps:
                     sym = p["symbol"]
                     self._pump_counts[sym] += 1
@@ -271,16 +285,16 @@ class MonitorApp:
                     if now - last_alert < DEDUP_SECONDS:
                         continue
                     self._last_pump_alert[sym] = now
+                    snap = self._price_snapshot.get(sym, p["current_price"])
+                    chg_5m = round(((p["current_price"] - snap) / snap * 100), 1) if snap else 0
                     sig = self.signal_engine.analyze_long(
                         sym, p["current_price"], p["pump_pct"],
-                        0, p.get("volume", 0)
+                        chg_5m, p.get("volume", 0)
                     )
-                    alert = self._fmt_1m_alert(sig)
+                    alert = self._fmt_alert(sig)
                     self._send_alert(alert)
-                    logger.info("PUMP(1m): " + sym + " +" + str(round(p["pump_pct"], 2)) + "%")
+                    logger.info("PUMP: " + sym + " +" + str(round(p["pump_pct"], 2)) + "%")
 
-                # ---- 1-minute dump detection ----
-                dumps = self.dump_detector.check_dumps(tickers)
                 for d in dumps:
                     sym = d["symbol"]
                     self._dump_counts[sym] += 1
@@ -288,64 +302,78 @@ class MonitorApp:
                     if now - last_alert < DEDUP_SECONDS:
                         continue
                     self._last_dump_alert[sym] = now
+                    snap = self._price_snapshot.get(sym, d["current_price"])
+                    chg_5m = round(((d["current_price"] - snap) / snap * 100), 1) if snap else 0
                     sig = self.signal_engine.analyze_short(
                         sym, d["current_price"], abs(d["drop_pct"]),
-                        0, d.get("volume", 0)
+                        chg_5m, d.get("volume", 0)
                     )
-                    alert = self._fmt_1m_alert(sig)
+                    alert = self._fmt_alert(sig)
                     self._send_alert(alert)
-                    logger.info("DUMP(1m): " + sym + " " + str(round(d["drop_pct"], 2)) + "%")
+                    logger.info("DUMP: " + sym + " " + str(round(d["drop_pct"], 2)) + "%")
 
-                # ---- 5-minute candle pump detection (>3.5%) ----
-                pumps_5m = self.pump_detector.check_5m_pumps(tickers)
-                for p in pumps_5m:
-                    sym = p["symbol"]
-                    self._5m_pump_counts[sym] += 1
-                    last_alert = self._last_5m_pump_alert.get(sym, 0)
-                    if now - last_alert < DEDUP_5M_SECONDS:
-                        continue
-                    self._last_5m_pump_alert[sym] = now
-                    sig = self.signal_engine.analyze_long(
-                        sym, p["current_price"], p["pump_pct"],
-                        p["pump_pct"], p.get("volume", 0)
-                    )
-                    alert = self._fmt_5m_alert(sig, "pump")
-                    self._send_alert(alert)
-                    logger.info("PUMP(5m): " + sym + " +" + str(round(p["pump_pct"], 2)) + "%")
+                if pumps or dumps:
+                    format_console(pumps)
 
-                # ---- 5-minute candle dump detection (>3.5%) ----
-                dumps_5m = self.dump_detector.check_5m_dumps(tickers)
-                for d in dumps_5m:
-                    sym = d["symbol"]
-                    self._5m_dump_counts[sym] += 1
-                    last_alert = self._last_5m_dump_alert.get(sym, 0)
-                    if now - last_alert < DEDUP_5M_SECONDS:
-                        continue
-                    self._last_5m_dump_alert[sym] = now
-                    sig = self.signal_engine.analyze_short(
-                        sym, d["current_price"], abs(d["drop_pct"]),
-                        abs(d["drop_pct"]), d.get("volume", 0)
-                    )
-                    alert = self._fmt_5m_alert(sig, "dump")
-                    self._send_alert(alert)
-                    logger.info("DUMP(5m): " + sym + " " + str(round(d["drop_pct"], 2)) + "%")
-
-                # ---- OI detection (once per minute) ----
                 if now - self._last_oi_fetch_time >= 60:
                     oi_data = self.fetcher.fetch_all_open_interest()
                     if oi_data:
                         self.oi_detector.update_oi(oi_data)
-                        spikes = self.oi_detector.check_oi_spikes()
-                        for s in spikes:
-                            sym = s["symbol"]
-                            alert = (
-                                f"\u26a1 *{sym} OI异动*\n"
-                                f"OI 5min变化：+{s['oi_change_pct']}%\n"
-                                f"当前OI：{s['current_oi']:.0f}"
-                            )
-                            self._send_alert(alert)
-                            logger.info("OI: " + sym + " +" + str(round(s["oi_change_pct"], 2)) + "%")
+                        self.oi_detector.check_oi_spikes()
                     self._last_oi_fetch_time = now
+
+                if now - self._last_report_time >= REPORT_INTERVAL_MINUTES * 60:
+                    pumps_win = self.pump_detector.get_current_window_pumps()
+                    dumps_win = self.dump_detector.get_current_window_dumps()
+                    oi_win = self.oi_detector.get_current_window_spikes()
+
+                    for p in pumps_win:
+                        p["detect_count"] = self._pump_counts.get(p["symbol"], 0)
+                        snap = self._price_snapshot.get(p["symbol"], p["current_price"])
+                        chg = round(((p["current_price"] - snap) / snap * 100), 1) if snap else 0
+                        p["change_5m"] = chg
+                        p["signal"] = self.signal_engine.analyze_long(
+                            p["symbol"], p["current_price"], p["pump_pct"],
+                            chg, p.get("volume", 0)
+                        )
+                    for d in dumps_win:
+                        d["detect_count"] = self._dump_counts.get(d["symbol"], 0)
+                        snap = self._price_snapshot.get(d["symbol"], d["current_price"])
+                        chg = round(((d["current_price"] - snap) / snap * 100), 1) if snap else 0
+                        d["change_5m"] = chg
+                        d["signal"] = self.signal_engine.analyze_short(
+                            d["symbol"], d["current_price"], abs(d["drop_pct"]),
+                            chg, d.get("volume", 0)
+                        )
+                    for s in oi_win:
+                        s["detect_count"] = self._oi_counts.get(s["symbol"], 0)
+                        curr = tickers.get(s["symbol"], {}).get("price", 0)
+                        snap = self._price_snapshot.get(s["symbol"], curr)
+                        s["change_5m"] = round(((curr - snap) / snap * 100), 1) if snap and curr else 0
+
+                    report = format_report(
+                        pumps_win, dumps_win, oi_win,
+                        self._window_start, datetime.now(),
+                    )
+
+                    if report:
+                        try:
+                            print(report)
+                        except Exception:
+                            pass
+                        print()
+                        self._send_alert(report)
+
+                    self._last_report_time = now
+                    self._window_start = datetime.now()
+                    self._window_start_ts = now
+                    self._price_snapshot = {}
+                    self.pump_detector.reset_window()
+                    self.dump_detector.reset_window()
+                    self.oi_detector.reset_window()
+                    self._pump_counts.clear()
+                    self._dump_counts.clear()
+                    self._oi_counts.clear()
 
             except KeyboardInterrupt:
                 break
@@ -355,54 +383,6 @@ class MonitorApp:
                 time.sleep(5)
 
         self.shutdown()
-
-    def _fmt_1m_alert(self, sig):
-        """Compact 1-minute alert format."""
-        d = sig["direction"]
-        emoji = "\U0001f4c8" if d == "LONG" else "\U0001f4c9"
-        status = "拉升" if d == "LONG" else "下跌"
-        pos_map = {"HEAVY": "重仓", "MEDIUM": "中等", "LIGHT": "轻仓", "WATCH": "观望"}
-
-        lines = [
-            emoji + " *" + sig["symbol"] + "｜1min " + status + " " + str(sig["pump_1m"]) + "%*",
-            "",
-            "\U0001f4ca 现价：" + str(sig["price"]) + " ｜成交额：" + str(sig["vol_m"]) + "M",
-        ]
-        if sig.get("can_enter"):
-            lines.append("\U0001f3af 入场：" + str(sig["pullback_entry"]) + " 止损：" + str(sig["sl"]))
-            tp_str = " > ".join([f"{t['price']}(+{t['pct']}%)" for t in sig["tp"][:2]])
-            lines.append("\U0001f4a1 止盈：" + tp_str)
-            lines.append("\u2699\ufe0f 仓位：" + pos_map.get(sig["position"], "") + " ｜评分：" + str(sig["score"]) + "/100")
-        else:
-            lines.append("\u23f3 趋势未确认 ｜评分：" + str(sig["score"]) + "/100")
-        return "\n".join(lines)
-
-    def _fmt_5m_alert(self, sig, typ):
-        """5-minute candle alert format."""
-        d = sig["direction"]
-        emoji = "\U0001f525" if d == "LONG" else "\U0001f4c9"
-        direction = "拉升" if d == "LONG" else "下跌"
-        pct_key = "pump_1m" if typ == "pump" else "pump_1m"
-        pos_map = {"HEAVY": "重仓", "MEDIUM": "中等", "LIGHT": "轻仓", "WATCH": "观望"}
-
-        lines = [
-            emoji + " *" + sig["symbol"] + "｜5minK线 " + direction + " " + str(sig[pct_key]) + "%*",
-            "",
-            "\U0001f4ca 现价：" + str(sig["price"]) + " ｜成交额：" + str(sig["vol_m"]) + "M",
-        ]
-        if d == "LONG":
-            lines.append("\U0001f4ca 支撑：" + str(sig["support"]) + " ｜压力：" + str(sig["resistance"]))
-        else:
-            lines.append("\U0001f4ca 压力：" + str(sig["support"]) + " ｜支撑：" + str(sig["resistance"]))
-
-        if sig.get("can_enter"):
-            lines.append("\U0001f3af 入场：" + str(sig["pullback_entry"]) + " 止损：" + str(sig["sl"]) + "（-" + str(sig["sl_pct"]) + "%）")
-            tp_str = " > ".join([f"{t['price']}(+{t['pct']}%)" for t in sig["tp"][:2]])
-            lines.append("\U0001f4a1 止盈：" + tp_str)
-            lines.append("\u2699\ufe0f 仓位：" + pos_map.get(sig["position"], "") + " ｜评分：" + str(sig["score"]) + "/100")
-        else:
-            lines.append("\u23f3 待确认 ｜评分：" + str(sig["score"]) + "/100")
-        return "\n".join(lines)
 
     def test_connection_sync(self):
         import asyncio
@@ -419,6 +399,45 @@ class MonitorApp:
             result = loop.run_until_complete(self.telegram.test_connection())
             loop.close()
             return result
+
+    def _fmt_alert(self, sig):
+        d = sig["direction"]
+        emoji = "📈" if d == "LONG" else "📉"
+        status = "拉升" if d == "LONG" else "下跌"
+        pos_map = {"HEAVY": "重仓", "MEDIUM": "中等", "LIGHT": "轻仓", "WATCH": "观望"}
+        upside_map = {"HIGH": "高", "MEDIUM": "中", "NORMAL": "一般"}
+
+        lines = [
+            emoji + " *" + sig["symbol"] + "｜" + status + "信号*",
+            "",
+            "🔍 *检测原因*",
+        ]
+        for r in sig["reasons"]:
+            lines.append("  • " + r)
+        lines.append("")
+        lines.append("📊 *数据*")
+        lines.append("  现价：" + str(sig["price"]))
+        lines.append("  1min：" + str(sig["pump_1m"]) + "% ｜ 5min：" + str(sig["change_5m"]) + "%")
+        lines.append("  成交额：" + str(sig["vol_m"]) + "M USDT")
+        if d == "LONG":
+            lines.append("  支撑：" + str(sig["support"]) + " ｜ 压力：" + str(sig["resistance"]))
+        else:
+            lines.append("  压力：" + str(sig["support"]) + " ｜ 支撑：" + str(sig["resistance"]))
+        lines.append("")
+        if sig.get("can_enter"):
+            lines.append("🎯 *交易计划*")
+            lines.append("  入场：" + str(sig["pullback_entry"]))
+            lines.append("  止损：" + str(sig["sl"]) + "（-" + str(sig["sl_pct"]) + "%）")
+            lines.append("  止盈：")
+            for i, tp in enumerate(sig["tp"]):
+                lines.append("    TP" + str(i + 1) + " " + str(tp["price"]) + "（+" + str(tp["pct"]) + "%）平" + str(tp["share"]) + "%")
+            lines.append("")
+            lines.append("⚙️ *仓位建议* " + pos_map.get(sig["position"], "") + "（" + str(sig["size_pct"]) + "%）｜盈亏比 1:" + str(sig["rr"]))
+            lines.append("🛡 *风控* 止损必执行 ｜ 分批止盈")
+        else:
+            lines.append("⏳ *状态* 趋势未确认，仅观察")
+        lines.append("⭐ *评分* " + str(sig["score"]) + "/100")
+        return "\n".join(lines)
 
     def shutdown(self):
         logger.info("Shutting down...")
