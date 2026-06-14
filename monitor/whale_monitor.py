@@ -18,7 +18,7 @@ class WhaleMonitor:
         "OKB_USDT", "GT_USDT", "APT_USDT", "ARB_USDT", "OP_USDT",
         "NEAR_USDT", "FIL_USDT", "ETC_USDT", "INJ_USDT", "TIA_USDT",
         "SUI_USDT", "SEI_USDT", "ZEC_USDT", "HYPE_USDT", "TAO_USDT",
-        "ICP_USDT", "TON_USDT", "XAUT_USDT",
+        "ICP_USDT", "TON_USDT", "XAUT_USDT", "TRUMP_USDT",
     }
 
     STATS_URL = "https://api.gateio.ws/api/v4/futures/usdt/contract_stats"
