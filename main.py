@@ -178,9 +178,7 @@ class MonitorApp:
         self.fetcher.start()
         self.health_guard.feed_data()
 
-        if self.telegram.enabled and self.test_connection_sync():
-            logger.info("Telegram ready")
-            self.health_guard.feed_tg_ok()
+        logger.info("Telegram sender ready")
 
         self.health_guard.start()
         self._window_start_ts = time.time()
@@ -297,7 +295,10 @@ class MonitorApp:
         self.shutdown()
 
     def test_connection_sync(self):
-        return self.telegram.test_connection()
+        try:
+            return self.telegram.test_connection()
+        except:
+            return False
 
     def shutdown(self):
         self._running = False

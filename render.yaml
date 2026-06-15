@@ -9,14 +9,10 @@
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      - key: MIN_VOLUME_USDT
-        value: "4500000"
-      - key: PUMP_THRESHOLD_PCT
-        value: "2.0"
-      - key: REPORT_INTERVAL_MINUTES
-        value: "5"
-      - key: CHECK_INTERVAL_SECONDS
-        value: "10"
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: PUMP_THRESHOLD_PCT
+        value: "2.0"
+      - key: CHECK_INTERVAL_SECONDS
+        value: "10"
     plan: free
