@@ -17,7 +17,6 @@ from config import (
 )
 from monitor.gate_fetcher import GateFuturesFetcher
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
-from monitor.reporter import format_console
 from monitor.telegram_sender import TelegramSender
 from monitor.whale_monitor import WhaleMonitor
 
@@ -281,8 +280,6 @@ class MonitorApp:
                     )
                     logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
 
-                if pumps or dumps:
-                    format_console(pumps)
 
                 # ═══ 60s: OI ═══
                 if now - self._last_oi_fetch >= 60:
