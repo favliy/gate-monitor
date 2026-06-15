@@ -232,9 +232,8 @@ class MonitorApp:
                     self._last_pump[sym] = now
                     vol_m = p.get("volume", 0) / 1_000_000
                     msg = (
-                        "📈 *" + sym + " 拉升 +" + str(round(p["pump_pct"],1)) + "%*
-"
-                        "📊 价格 " + str(p["current_price"]) + " | 1min +" + str(round(p["pump_pct"],1)) + "% | 量 " + f"{vol_m:.0f}" + "M"
+                        "📈 *" + sym + " 拉升 +" + str(round(p["pump_pct"], 1)) + "%*\n"
+                        "📊 " + str(p["current_price"]) + " | 1min +" + str(round(p["pump_pct"], 1)) + "% | 量 " + str(round(vol_m)) + "M"
                     )
                     self._send(msg)
 
@@ -245,9 +244,8 @@ class MonitorApp:
                     self._last_dump[sym] = now
                     vol_m = d.get("volume", 0) / 1_000_000
                     msg = (
-                        "📉 *" + sym + " 下跌 " + str(round(d["drop_pct"],1)) + "%*
-"
-                        "📊 价格 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"],1)) + "% | 量 " + f"{vol_m:.0f}" + "M"
+                        "📉 *" + sym + " 下跌 " + str(round(d["drop_pct"], 1)) + "%*\n"
+                        "📊 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"], 1)) + "% | 量 " + str(round(vol_m)) + "M"
                     )
                     self._send(msg)
 

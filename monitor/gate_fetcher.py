@@ -1,18 +1,14 @@
 ﻿import logging
-import os
 import threading
 import time
-from typing import Dict, Optional, Callable, Set
+from typing import Dict, Optional, Callable
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-BINANCE_SYMBOLS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "binance_usdt_perps.txt")
-
-
 class GateFuturesFetcher:
-    """Fetch USDT perpetual futures from Gate.io, filtered to Binance-listed pairs."""
+    """Fetch USDT perpetual futures from Gate.io, all USDT perpetuals on Gate.io."""
 
     TICKERS_URL = "https://api.gateio.ws/api/v4/futures/usdt/tickers"
     CONTRACTS_URL = "https://api.gateio.ws/api/v4/futures/usdt/contracts"
@@ -25,30 +21,7 @@ class GateFuturesFetcher:
         self._on_update: Optional[Callable] = None
         self._whitelist_symbols: Set[str] = set()
         self._session: Optional[requests.Session] = None
-        self._binance_symbols: Set[str] = set()
 
-    def _load_binance_symbols(self) -> Set[str]:
-        symbols = set()
-        if os.path.exists(BINANCE_SYMBOLS_FILE):
-            try:
-                with open(BINANCE_SYMBOLS_FILE, "r", encoding="utf-8") as f:
-                    for line in f:
-                        sym = line.strip()
-                        if sym:
-                            symbols.add(sym)
-            except UnicodeDecodeError:
-                with open(BINANCE_SYMBOLS_FILE, "r", encoding="gbk") as f:
-                    for line in f:
-                        sym = line.strip()
-                        if sym:
-                            symbols.add(sym)
-            logger.info(f"Loaded {len(symbols)} Binance USDT perpetual symbols")
-        else:
-            logger.warning(f"Binance symbols file not found: {BINANCE_SYMBOLS_FILE}")
-        return symbols
-
-    def _gate_to_binance(self, gate_contract: str) -> str:
-        return gate_contract.replace("_", "")
 
     def _make_session(self) -> requests.Session:
         from config import HTTP_PROXY, HTTPS_PROXY
@@ -85,9 +58,6 @@ class GateFuturesFetcher:
             contract = t.get("contract", "")
             if not contract.endswith("_USDT"):
                 continue
-            binance_sym = self._gate_to_binance(contract)
-            if binance_sym not in self._binance_symbols:
-                continue
             volume = float(t.get("volume_24h_quote", 0))
             if volume < 4500000:
                 continue
@@ -101,7 +71,7 @@ class GateFuturesFetcher:
             }
             matched += 1
 
-        logger.info(f"{matched} Binance-listed contracts (vol >= 4.5M USDT)")
+        logger.info(f"{matched} Gate.io USDT contracts (vol >= 4.5M USDT)")
         return tickers
 
     def _fetch_prices(self) -> dict:
@@ -143,9 +113,39 @@ class GateFuturesFetcher:
             logger.error(f"Failed to fetch OI: {e}")
             return {}
 
+    def _refresh_whitelist(self):
+        """Periodically refresh whitelist to include newly active contracts."""
+        try:
+            resp = self._session.get(self.TICKERS_URL, timeout=15)
+            resp.raise_for_status()
+            new_symbols = set()
+            for t in resp.json():
+                contract = t.get("contract", "")
+                if not contract.endswith("_USDT"):
+                    continue
+                if float(t.get("volume_24h_quote", 0)) >= 4500000:
+                    new_symbols.add(contract)
+            added = new_symbols - self._whitelist_symbols
+            if added:
+                logger.info(f"Whitelist refresh: added {len(added)} new contracts")
+                with self._lock:
+                    self._whitelist_symbols |= added
+                    for sym in added:
+                        self._tickers[sym] = {
+                            "price": 0, "volume": 0, "high": 0, "low": 0, "change_pct": 0, "oi": 0,
+                        }
+        except Exception as e:
+            logger.debug(f"Whitelist refresh failed: {e}")
+
     def _poll_loop(self):
+        last_refresh = 0
         while self._running:
             try:
+                # Refresh whitelist every 5 minutes
+                if time.time() - last_refresh > 300:
+                    self._refresh_whitelist()
+                    last_refresh = time.time()
+
                 updates = self._fetch_prices()
                 if updates:
                     with self._lock:
@@ -164,7 +164,6 @@ class GateFuturesFetcher:
     def start(self, on_update: Callable = None):
         self._on_update = on_update
         self._session = self._make_session()
-        self._binance_symbols = self._load_binance_symbols()
         tickers = self._get_initial_tickers()
         self._whitelist_symbols = set(tickers.keys())
         with self._lock:
