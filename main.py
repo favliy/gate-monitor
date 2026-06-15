@@ -6,10 +6,6 @@ import io
 import os
 import threading
 
-os.environ["TZ"] = "Asia/Shanghai"
-try: time.tzset()
-except: pass
-
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
 
