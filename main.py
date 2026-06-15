@@ -153,34 +153,15 @@ class MonitorApp:
 
     def _fmt_whale_batch(self, results):
         """Batch all whale signals into one clean message."""
-        blocks = []
-
-        funding = results.get("funding", [])
-        if funding:
-            items = [f"  {f['symbol']} 费率{f['funding']:+.3f}% 多空{f['lsr']}" for f in funding[:5]]
-            blocks.append("📊 *资金费率异常*\n" + "\n".join(items))
-
-        depth = results.get("depth", [])
-        if depth:
-            items = [f"  {d['symbol']} bid{d['bid_depth']:.0f} ask{d['ask_depth']:.0f}U" for d in depth[:5]]
-            blocks.append("📖 *盘口薄弱*\n" + "\n".join(items))
-
-        oi_div = results.get("oi_div", [])
-        if oi_div:
-            items = [f"  {d['symbol']} 价{d['price_chg']:+.1f}% OI{d['oi_chg']:+.1f}%" for d in oi_div[:5]]
-            blocks.append("👀 *OI背离*\n" + "\n".join(items))
-
-        trades = results.get("large_trades", [])
-        if trades:
-            by_sym = {}
-            for t in trades:
-                by_sym.setdefault(t["symbol"], []).append(t)
-            items = []
-            for sym, ts in list(by_sym.items())[:4]:
-                summary = " ".join([f"{t['side']}{t['value']:.0f}U" for t in ts[:2]])
-                items.append(f"  {sym} {summary}")
-            blocks.append("🐳 *大单*\n" + "\n".join(items))
-
+        parts = []
+        for f in results.get("funding", [])[:3]:
+            parts.append(f"📊 {f['symbol']} 费{f['funding']:+.3f}% LSR{f['lsr']}")
+        for d in results.get("depth", [])[:3]:
+            parts.append(f"📖 {d['symbol']} bid{d['bid_depth']:.0f} ask{d['ask_depth']:.0f}")
+        for d in results.get("oi_div", [])[:3]:
+            parts.append(f"👀 {d['symbol']} 价{d['price_chg']:+.1f}% OI{d['oi_chg']:+.1f}%")
+        for sym, trades in [(t['symbol'], t) for t in results.get("large_trades", [])][:2]:
+            parts.append(f"🐳 {sym} 大单")
         if not blocks:
             return None
 
@@ -261,10 +242,7 @@ class MonitorApp:
                         continue
                     self._last_5m_pump[sym] = now
                     vm = p.get("volume", 0) / 1_000_000
-                    self._send(
-                        chr(0x1f525) + " *" + sym + " 5min +" + str(round(p["pct"], 1)) + "%*" + chr(10) +
-                        chr(0x1f4ca) + " " + str(p["price"]) + " | 5min +" + str(round(p["pct"], 1)) + "% | " + str(round(vm)) + "M"
-                    )
+                    self._send(chr(0x1f525) + " *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
 
                 dumps_5m = self.dump_detector.check_5m_dumps(tickers)
@@ -274,10 +252,7 @@ class MonitorApp:
                         continue
                     self._last_5m_dump[sym] = now
                     vm = d.get("volume", 0) / 1_000_000
-                    self._send(
-                        chr(0x1f4c9) + " *" + sym + " 5min " + str(round(d["pct"], 1)) + "%*" + chr(10) +
-                        chr(0x1f4ca) + " " + str(d["price"]) + " | 5min " + str(round(d["pct"], 1)) + "% | " + str(round(vm)) + "M"
-                    )
+                    self._send(chr(0x1f4c9) + " *" + sym + " 5m " + str(round(d["pct"], 1)) + "% | " + str(d["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
 
 
