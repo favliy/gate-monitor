@@ -5,6 +5,11 @@ import time
 import io
 import os
 import threading
+
+os.environ["TZ"] = "Asia/Shanghai"
+try: time.tzset()
+except: pass
+
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
 
@@ -31,6 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DEDUP_SECONDS = 300       # 1min alerts: 5min per symbol
+DEDUP_5M = 300            # 5min alerts: 5min per symbol
 OI_DEDUP = 600            # OI alerts: 10min per symbol
 WHALE_INTERVAL = 300      # Whale batch: every 5min
 
@@ -132,6 +138,8 @@ class MonitorApp:
         self._last_whale = 0
         self._last_pump = {}
         self._last_dump = {}
+        self._last_5m_pump = {}
+        self._last_5m_dump = {}
         self._last_oi_alert = {}
         self._price_snap = {}
 
@@ -248,6 +256,34 @@ class MonitorApp:
                         "📊 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"], 1)) + "% | 量 " + str(round(vol_m)) + "M"
                     )
                     self._send(msg)
+
+
+                # 5min pump/dump
+                pumps_5m = self.pump_detector.check_5m_pumps(tickers)
+                for p in pumps_5m:
+                    sym = p["symbol"]
+                    if now - self._last_5m_pump.get(sym, 0) < DEDUP_5M:
+                        continue
+                    self._last_5m_pump[sym] = now
+                    vm = p.get("volume", 0) / 1_000_000
+                    self._send(
+                        chr(0x1f525) + " *" + sym + " 5min +" + str(round(p["pct"], 1)) + "%*" + chr(10) +
+                        chr(0x1f4ca) + " " + str(p["price"]) + " | 5min +" + str(round(p["pct"], 1)) + "% | " + str(round(vm)) + "M"
+                    )
+                    logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
+
+                dumps_5m = self.dump_detector.check_5m_dumps(tickers)
+                for d in dumps_5m:
+                    sym = d["symbol"]
+                    if now - self._last_5m_dump.get(sym, 0) < DEDUP_5M:
+                        continue
+                    self._last_5m_dump[sym] = now
+                    vm = d.get("volume", 0) / 1_000_000
+                    self._send(
+                        chr(0x1f4c9) + " *" + sym + " 5min " + str(round(d["pct"], 1)) + "%*" + chr(10) +
+                        chr(0x1f4ca) + " " + str(d["price"]) + " | 5min " + str(round(d["pct"], 1)) + "% | " + str(round(vm)) + "M"
+                    )
+                    logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
 
                 if pumps or dumps:
                     format_console(pumps)

@@ -81,6 +81,36 @@ class PumpDetector:
             return 0
         return round(((current_price - price_5m_ago) / price_5m_ago) * 100, 2)
 
+    def check_5m_pumps(self, tickers: dict) -> list:
+        """Detect 5-minute pumps."""
+        now = time.time()
+        pumps = []
+        for sym, info in tickers.items():
+            price = info.get("price", 0)
+            if price <= 0:
+                continue
+            history = self._price_history.get(sym, [])
+            if len(history) < 2:
+                continue
+            target = now - 300
+            old_price = None
+            for ts, p in reversed(history):
+                if ts <= target:
+                    old_price = p
+                    break
+            if old_price is None or old_price <= 0:
+                continue
+            pct = ((price - old_price) / old_price) * 100
+            if pct >= 3.5:  # 5min threshold
+                pumps.append({
+                    "symbol": sym, "pct": round(pct, 2),
+                    "price": price, "old_price": round(old_price, 6),
+                    "volume": info.get("volume", 0),
+                    "timestamp": now,
+                })
+        pumps.sort(key=lambda x: x["pct"], reverse=True)
+        return pumps
+
     def reset_window(self):
         self._current_pumps.clear()
 
@@ -142,6 +172,36 @@ class DumpDetector:
     def get_current_window_dumps(self) -> List[dict]:
         dumps = list(self._current_dumps.values())
         dumps.sort(key=lambda x: x["drop_pct"])
+        return dumps
+
+    def check_5m_dumps(self, tickers: dict) -> list:
+        """Detect 5-minute dumps."""
+        now = time.time()
+        dumps = []
+        for sym, info in tickers.items():
+            price = info.get("price", 0)
+            if price <= 0:
+                continue
+            history = self._price_history.get(sym, [])
+            if len(history) < 2:
+                continue
+            target = now - 300
+            old_price = None
+            for ts, p in reversed(history):
+                if ts <= target:
+                    old_price = p
+                    break
+            if old_price is None or old_price <= 0:
+                continue
+            pct = ((price - old_price) / old_price) * 100
+            if pct <= -3.5:  # 5min threshold
+                dumps.append({
+                    "symbol": sym, "pct": round(pct, 2),
+                    "price": price, "old_price": round(old_price, 6),
+                    "volume": info.get("volume", 0),
+                    "timestamp": now,
+                })
+        dumps.sort(key=lambda x: x["pct"])
         return dumps
 
     def reset_window(self):
