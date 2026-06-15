@@ -186,7 +186,8 @@ class MonitorApp:
         self._window_start_ts = time.time()
         self._price_snap = {}
 
-        logger.info("Monitoring started.")
+        logger.info("Monitoring started. [v3-clean]")
+        self._send("✅ Monitor v3.0 启动 | 纯通知 无报告")
 
         while self._running:
             try:
