@@ -262,9 +262,8 @@ class MonitorApp:
                     self._last_5m_pump[sym] = now
                     vm = p.get("volume", 0) / 1_000_000
                     self._send(
-                        "🔥 *" + sym + " 5min +" + str(round(p["pct"], 1)) + "%*
-"
-                        "📊 " + str(p["price"]) + " | 5min +" + str(round(p["pct"], 1)) + "% | " + str(round(vm)) + "M"
+                        chr(0x1f525) + " *" + sym + " 5min +" + str(round(p["pct"], 1)) + "%*" + chr(10) +
+                        chr(0x1f4ca) + " " + str(p["price"]) + " | 5min +" + str(round(p["pct"], 1)) + "% | " + str(round(vm)) + "M"
                     )
                     logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
 
@@ -276,9 +275,8 @@ class MonitorApp:
                     self._last_5m_dump[sym] = now
                     vm = d.get("volume", 0) / 1_000_000
                     self._send(
-                        "📉 *" + sym + " 5min " + str(round(d["pct"], 1)) + "%*
-"
-                        "📊 " + str(d["price"]) + " | 5min " + str(round(d["pct"], 1)) + "% | " + str(round(vm)) + "M"
+                        chr(0x1f4c9) + " *" + sym + " 5min " + str(round(d["pct"], 1)) + "%*" + chr(10) +
+                        chr(0x1f4ca) + " " + str(d["price"]) + " | 5min " + str(round(d["pct"], 1)) + "% | " + str(round(vm)) + "M"
                     )
                     logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
 
