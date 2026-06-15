@@ -67,6 +67,7 @@ class GateFuturesFetcher:
                 "high": float(t.get("high_24h", 0)),
                 "low": float(t.get("low_24h", 0)),
                 "change_pct": float(t.get("change_percentage", 0)),
+                "funding_rate": float(t.get("funding_rate", 0)),
                 "oi": 0,
             }
             matched += 1
@@ -89,7 +90,8 @@ class GateFuturesFetcher:
                 volume = float(t.get("volume_24h_quote", 0))
                 if price <= 0:
                     continue
-                updates[contract] = {"price": price, "volume": volume, "ts": now}
+                fr = float(t.get("funding_rate", 0))
+                updates[contract] = {"price": price, "volume": volume, "funding_rate": fr, "ts": now}
             return updates
         except Exception as e:
             logger.error(f"Failed to fetch prices: {e}")
@@ -152,9 +154,9 @@ class GateFuturesFetcher:
                         for sym, info in updates.items():
                             if sym in self._tickers:
                                 self._tickers[sym]["price"] = info["price"]
-                                self._tickers[sym]["volume"] = info.get(
-                                    "volume", self._tickers[sym].get("volume", 0)
-                                )
+                                self._tickers[sym]["volume"] = info.get("volume", self._tickers[sym].get("volume", 0))
+                                if "funding_rate" in info:
+                                    self._tickers[sym]["funding_rate"] = info["funding_rate"]
                     if self._on_update:
                         self._on_update(updates)
             except Exception as e:
