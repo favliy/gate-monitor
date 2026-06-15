@@ -142,7 +142,7 @@ class MonitorApp:
     def _send(self, text):
         if self.telegram.enabled and text:
             try:
-                ok = self.telegram.send_message_sync(text)
+                ok = self.telegram.send_message(text)
                 if ok: self.health_guard.feed_tg_ok()
                 else: self.health_guard.feed_tg_fail()
             except Exception as e:
@@ -324,18 +324,7 @@ class MonitorApp:
         self.shutdown()
 
     def test_connection_sync(self):
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                nl = asyncio.new_event_loop()
-                r = nl.run_until_complete(self.telegram.test_connection())
-                nl.close(); return r
-            return loop.run_until_complete(self.telegram.test_connection())
-        except RuntimeError:
-            nl = asyncio.new_event_loop()
-            r = nl.run_until_complete(self.telegram.test_connection())
-            nl.close(); return r
+        return self.telegram.test_connection()
 
     def shutdown(self):
         self._running = False
