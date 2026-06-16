@@ -158,7 +158,7 @@ class WhaleMonitor:
 
             # 1) Funding rate (30min dedup)
             if now - self._last_funding.get(sym, 0) > 1800:
-                f = self.check_funding(sym)
+                f = self.check_funding(sym, info.get("funding_rate", 0))
                 if f and f.get("warning"):
                     results["funding"].append(f)
                     self._last_funding[sym] = now
