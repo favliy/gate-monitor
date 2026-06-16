@@ -2,7 +2,7 @@
 from dotenv import load_dotenv
 import os as _os
 
-load_dotenv(_os.path.join(_os.path.dirname(__file__), ".env"))
+load_dotenv(_os.path.join(_os.path.dirname(__file__), ".env"), override=True)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
