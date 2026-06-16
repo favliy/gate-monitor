@@ -152,6 +152,7 @@ class MonitorApp:
         self._window_start_ts = time.time()
         self._last_oi_fetch = 0
         self._last_whale = 0
+        self._last_funding_report = 0
         self._last_pump = {}
         self._last_dump = {}
         self._last_5m_pump = {}
@@ -188,6 +189,19 @@ class MonitorApp:
 
         return "🔍 *庄家监控 " + time.strftime("%H:%M") + "*\n" + "\n\n".join(lines)
 
+
+    # Funding rate scan
+
+    def _scan_funding_rates(self, tickers: dict) -> list:
+        """Return list of {symbol, rate_pct} for |rate| > 0.5%."""
+        extreme = []
+        for sym, info in tickers.items():
+            fr = info.get("funding_rate", 0)
+            rate_pct = fr * 100
+            if abs(rate_pct) > 0.3:
+                extreme.append({"symbol": sym, "rate_pct": round(rate_pct, 4)})
+        extreme.sort(key=lambda x: abs(x["rate_pct"]), reverse=True)
+        return extreme
     # ── Main loop ───────────────────────────────────────────────
 
     def run(self):
@@ -315,6 +329,18 @@ class MonitorApp:
                         self._send(msg)
                         logger.info("WHALE batch sent")
                     self._last_whale = now
+
+                # 30min: Funding rate extremes
+                if now - self._last_funding_report >= 1800:
+                    extreme = self._scan_funding_rates(tickers)
+                    if extreme:
+                        lines = ["?? *???? " + time.strftime("%H:%M") + "*"]
+                        for e in extreme[:10]:
+                            emoji = "??" if e["rate_pct"] > 0 else "??"
+                            lines.append(f"{emoji} {e["symbol"]} {e["rate_pct"]:+.3f}%")
+                        self._send("\n".join(lines))
+                        logger.info(f"Funding report: {len(extreme)} extreme rates")
+                    self._last_funding_report = now
 
             except KeyboardInterrupt:
                 break
