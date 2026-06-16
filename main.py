@@ -213,7 +213,7 @@ class MonitorApp:
         """Return list of {symbol, rate_pct} for |rate| > 0.5%."""
         extreme = []
         for sym, info in tickers.items():
-            fr = info.get("funding_rate", 0)
+            fr = float(info.get("funding_rate", 0) or 0)
             rate_pct = fr * 100
             if abs(rate_pct) > 0.3:
                 extreme.append({"symbol": sym, "rate_pct": round(rate_pct, 4)})

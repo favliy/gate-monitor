@@ -67,7 +67,7 @@ class GateFuturesFetcher:
                 "high": float(t.get("high_24h", 0)),
                 "low": float(t.get("low_24h", 0)),
                 "change_pct": float(t.get("change_percentage", 0)),
-                "funding_rate": float(t.get("funding_rate", 0)),
+                "funding_rate": float(t.get("funding_rate") or 0),
                 "oi": 0,
             }
             matched += 1
@@ -90,7 +90,7 @@ class GateFuturesFetcher:
                 volume = float(t.get("volume_24h_quote", 0))
                 if price <= 0:
                     continue
-                fr = float(t.get("funding_rate", 0))
+                fr = float(t.get("funding_rate") or 0)
                 updates[contract] = {"price": price, "volume": volume, "funding_rate": fr, "ts": now}
             return updates
         except Exception as e:
