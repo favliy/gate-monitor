@@ -228,11 +228,6 @@ class MonitorApp:
         logger.info("=" * 50)
 
         self.fetcher.start()
-                # Self-ping to prevent Render spin-down
-                try:
-                    requests.get("http://localhost:" + os.environ.get("PORT", "8080") + "/", timeout=3)
-                except Exception:
-                    pass
         self.health_guard.feed_data()
 
         logger.info("Telegram sender ready")
@@ -264,6 +259,12 @@ class MonitorApp:
                     continue
 
                 self.health_guard.feed_data()
+
+                # Self-ping to prevent Render spin-down
+                try:
+                    requests.get("http://localhost:" + os.environ.get("PORT", "8080") + "/", timeout=3)
+                except Exception:
+                    pass
 
                 if not self._price_snap:
                     for sym, info in tickers.items():
