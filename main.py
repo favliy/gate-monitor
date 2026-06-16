@@ -5,7 +5,6 @@ import time
 import io
 import os
 import threading
-import requests
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
@@ -78,8 +77,6 @@ class HealthGuard:
         self.app = app; self._running = False
         self.last_data_ts = time.time(); self.last_ticker_count = 0
         self.consecutive_stale = 0; self.consecutive_tg_fails = 0
-        self.loop_stuck_count = 0; self._last_hist = 0
-        self.LOOP_STUCK_MAX = 4  # 4*30s = 2min no price update = restart
         self.fetcher_restarts = 0; self.tg_reconnects = 0
         self.total_errors = 0; self._last_report = 0
         self.STALE = 120; self.MAX_STALE = 3; self.IV = 30
@@ -117,20 +114,6 @@ class HealthGuard:
             try:
                 time.sleep(self.IV)
                 now = time.time()
-                # Loop stuck watchdog
-                try:
-                    hist = sum(len(v) for v in self.app.pump_detector._price_history.values())
-                    if hist > 0 and hist == self._last_hist:
-                        self.loop_stuck_count += 1
-                        if self.loop_stuck_count >= self.LOOP_STUCK_MAX:
-                            logger.warning("Loop stuck! Exiting...")
-                            os._exit(1)
-                    else:
-                        self._last_hist = hist
-                        self.loop_stuck_count = 0
-                except Exception:
-                    pass
-
                 if now - self.last_data_ts > self.STALE:
                     self.consecutive_stale += 1
                     if self.consecutive_stale >= self.MAX_STALE:
@@ -260,14 +243,7 @@ class MonitorApp:
 
                 self.health_guard.feed_data()
 
-                # Self-ping to prevent Render spin-down
-                try:
-                    requests.get("http://localhost:" + os.environ.get("PORT", "8080") + "/", timeout=3)
-                except Exception:
-                    pass
-
                 if not self._price_snap:
-                    for sym, info in tickers.items():
                         self._price_snap[sym] = info.get("price", 0)
 
                 # ═══ 1min pump/dump ═══
