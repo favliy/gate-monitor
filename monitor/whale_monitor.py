@@ -57,10 +57,8 @@ class WhaleMonitor:
             warning = None
             if abs(rate) > 0.5:
                 warning = f"多头拥挤 费率{rate:+.3f}%" if rate > 0 else f"空头拥挤 费率{rate:+.3f}%"
-            elif lsr > 3:
-                warning = f"多空比{lsr:.1f} 多单过度"
 
-            return {"symbol": symbol, "funding": round(rate, 4), "lsr": round(lsr, 2),
+            return {"symbol": symbol, "funding": round(rate, 4),
                     "oi": oi, "warning": warning}
         except Exception as e:
             logger.debug(f"Funding {symbol}: {e}")
