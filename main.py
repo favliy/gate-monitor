@@ -244,6 +244,7 @@ class MonitorApp:
                 self.health_guard.feed_data()
 
                 if not self._price_snap:
+                    for sym, info in tickers.items():
                         self._price_snap[sym] = info.get("price", 0)
 
                 # ═══ 1min pump/dump ═══
