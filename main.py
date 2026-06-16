@@ -153,16 +153,16 @@ class MonitorApp:
 
     def _fmt_whale_batch(self, results):
         """Batch all whale signals into one clean message."""
-        parts = []
+        lines = []
         for f in results.get("funding", [])[:3]:
-            parts.append(f"📊 {f['symbol']} 费{f['funding']:+.3f}% LSR{f['lsr']}")
+            lines.append(f"📊 {f['symbol']} 费{f['funding']:+.3f}% LSR{f['lsr']}")
         for d in results.get("depth", [])[:3]:
-            parts.append(f"📖 {d['symbol']} bid{d['bid_depth']:.0f} ask{d['ask_depth']:.0f}")
+            lines.append(f"📖 {d['symbol']} bid{d['bid_depth']:.0f} ask{d['ask_depth']:.0f}")
         for d in results.get("oi_div", [])[:3]:
-            parts.append(f"👀 {d['symbol']} 价{d['price_chg']:+.1f}% OI{d['oi_chg']:+.1f}%")
+            lines.append(f"👀 {d['symbol']} 价{d['price_chg']:+.1f}% OI{d['oi_chg']:+.1f}%")
         for sym, trades in [(t['symbol'], t) for t in results.get("large_trades", [])][:2]:
-            parts.append(f"🐳 {sym} 大单")
-        if not blocks:
+            lines.append(f"🐳 {sym} 大单")
+        if not lines:
             return None
 
         return "🔍 *庄家监控 " + time.strftime("%H:%M") + "*\n" + "\n\n".join(blocks)

@@ -7,8 +7,10 @@
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+        value: "8946385457:AAFG3RKJmDqmScuebTbKfw_zDvAE1zrLq6w"
       - key: TELEGRAM_CHAT_ID
         sync: false
+        value: "-1003974837328"
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: PUMP_THRESHOLD_PCT
