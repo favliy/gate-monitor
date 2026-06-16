@@ -177,7 +177,7 @@ class MonitorApp:
         """Batch all whale signals into one clean message."""
         lines = []
         for f in results.get("funding", [])[:3]:
-            lines.append(f"📊 {f['symbol']} 费{f['funding']:+.3f}% LSR{f['lsr']}")
+            lines.append(f"📊 {f['symbol']} 费{f['funding']:+.3f}% LSR{f['lsr']:.1f}")
         for d in results.get("depth", [])[:3]:
             lines.append(f"📖 {d['symbol']} bid{d['bid_depth']:.0f} ask{d['ask_depth']:.0f}")
         for d in results.get("oi_div", [])[:3]:

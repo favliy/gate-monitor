@@ -51,7 +51,7 @@ class WhaleMonitor:
                 return None
             d = data[0]
             rate = funding_rate * 100  # from tickers, not contract_stats
-            lsr = float(d.get("lsr_taker", 0))
+            lsr_raw = float(d.get("lsr_taker", 0)); lsr = min(lsr_raw, 50)
             oi = float(d.get("open_interest_usd", 0))
 
             warning = None
