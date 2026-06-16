@@ -320,15 +320,7 @@ class MonitorApp:
                             logger.info(f"OI {sym} +{round(s['oi_change_pct'],2)}%")
                     self._last_oi_fetch = now
 
-                # ═══ 5min: Whale batch ═══
-                if now - self._last_whale >= WHALE_INTERVAL:
-                    results = self.whale_monitor.scan(
-                        tickers, self.oi_detector._oi_history)
-                    msg = self._fmt_whale_batch(results)
-                    if msg:
-                        self._send(msg)
-                        logger.info("WHALE batch sent")
-                    self._last_whale = now
+                # Whale monitoring disabled
 
                 # 30min: Funding rate extremes
                 if now - self._last_funding_report >= 1800:
