@@ -5,6 +5,7 @@ import time
 import io
 import os
 import threading
+import requests
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
@@ -227,6 +228,11 @@ class MonitorApp:
         logger.info("=" * 50)
 
         self.fetcher.start()
+                # Self-ping to prevent Render spin-down
+                try:
+                    requests.get("http://localhost:" + os.environ.get("PORT", "8080") + "/", timeout=3)
+                except Exception:
+                    pass
         self.health_guard.feed_data()
 
         logger.info("Telegram sender ready")
