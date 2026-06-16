@@ -165,7 +165,7 @@ class MonitorApp:
         if not lines:
             return None
 
-        return "🔍 *庄家监控 " + time.strftime("%H:%M") + "*\n" + "\n\n".join(blocks)
+        return "🔍 *庄家监控 " + time.strftime("%H:%M") + "*\n" + "\n\n".join(lines)
 
     # ── Main loop ───────────────────────────────────────────────
 
