@@ -41,7 +41,7 @@ class WhaleMonitor:
 
     # ── Funding rate ────────────────────────────────────────────
 
-    def check_funding(self, symbol: str) -> Optional[dict]:
+    def check_funding(self, symbol: str, funding_rate: float = 0) -> Optional[dict]:
         try:
             resp = self.session.get(self.STATS_URL, params={
                 "contract": symbol, "interval": "5m", "limit": 1
@@ -50,7 +50,7 @@ class WhaleMonitor:
             if not data:
                 return None
             d = data[0]
-            rate = float(d.get("funding_rate", 0)) * 100
+            rate = funding_rate * 100  # from tickers, not contract_stats
             lsr = float(d.get("lsr_taker", 0))
             oi = float(d.get("open_interest_usd", 0))
 
