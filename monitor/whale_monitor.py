@@ -195,11 +195,6 @@ class WhaleMonitor:
                             results["oi_div"].append(div)
                             self._last_oi_div[sym] = now
 
-            # 4) Large trades (10min, top 10 vol)
-            if sym in syms[:10] and now - self._last_large.get(sym, 0) > 600:
-                trades = self.check_large_trades(sym)
-                if trades:
-                    results["large_trades"].extend(trades[:3])
-                    self._last_large[sym] = now
+            # 4) Large trades - removed
 
         return results
