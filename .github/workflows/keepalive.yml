@@ -12,7 +12,7 @@ jobs:
       - name: Ping Render
         run: |
           for i in 1 2 3; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://gate-monitor-yhab.onrender.com)
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://gate-monitor-1.onrender.com)
             echo "Ping $i: $CODE"
             sleep 2
           done
