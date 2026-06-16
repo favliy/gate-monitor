@@ -20,11 +20,6 @@ from monitor.detector import PumpDetector, DumpDetector, OIDetector
 from monitor.telegram_sender import TelegramSender
 from monitor.whale_monitor import WhaleMonitor
 
-# Block stale modules
-import sys as _sys
-for _m in ["monitor.reporter", "monitor.trading_signal", "monitor.paper_trader"]:
-    _sys.modules[_m] = type(_sys)("blocked")
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
