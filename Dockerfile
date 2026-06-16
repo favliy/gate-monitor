@@ -11,16 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p logs
 
-# Nuclear cleanup at build time
-RUN rm -f monitor/reporter.py monitor/trading_signal.py monitor/paper_trader.py 2>/dev/null || true
-RUN find . -name "*.pyc" -delete 2>/dev/null || true
-RUN find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-
-# Make entrypoint executable
-RUN chmod +x /app/docker-entrypoint.sh
+# Force clean old modules at build
+RUN rm -f monitor/reporter.py monitor/trading_signal.py monitor/paper_trader.py 2>/dev/null; find . -name "*.pyc" -delete; find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; echo "build clean done"
 
 ENV PORT=8080
 EXPOSE 8080
 
-# Entrypoint cleans old modules EVERY container start
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+# Start: clean first, then run
+CMD rm -f /app/monitor/reporter.py /app/monitor/trading_signal.py /app/monitor/paper_trader.py 2>/dev/null; find /app -name "*.pyc" -delete 2>/dev/null; find /app -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; echo "[startup] old modules cleaned"; exec python /app/main.py
