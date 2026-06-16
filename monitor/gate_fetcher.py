@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import threading
 import time
 from typing import Dict, Optional, Callable

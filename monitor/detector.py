@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import time
 from collections import defaultdict
 from datetime import datetime
