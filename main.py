@@ -334,9 +334,9 @@ class MonitorApp:
                 if now - self._last_funding_report >= 1800:
                     extreme = self._scan_funding_rates(tickers)
                     if extreme:
-                        lines = ["?? *???? " + time.strftime("%H:%M") + "*"]
+                        lines = ["[费率异动] " + time.strftime("%H:%M")]
                         for e in extreme[:10]:
-                            emoji = "??" if e["rate_pct"] > 0 else "??"
+                            emoji = "[L]" if e["rate_pct"] > 0 else "[S]"
                             lines.append(f"{emoji} {e["symbol"]} {e["rate_pct"]:+.3f}%")
                         self._send("\n".join(lines))
                         logger.info(f"Funding report: {len(extreme)} extreme rates")
