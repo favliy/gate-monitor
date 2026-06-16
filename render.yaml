@@ -6,10 +6,10 @@
     healthCheckPath: /
     envVars:
       - key: TELEGRAM_BOT_TOKEN
-        sync: false
+        sync: true
         value: "8822386674:AAFb7O3ziDBS358kI14ykXSl3lI9OsFl6vw"
       - key: TELEGRAM_CHAT_ID
-        sync: false
+        sync: true
         value: "-1003974837328"
       - key: PYTHONUNBUFFERED
         value: "1"
