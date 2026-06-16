@@ -185,6 +185,16 @@ class MonitorApp:
         self._price_snap = {}
 
         logger.info("Monitoring started. [v3-clean]")
+
+        # Verify clean environment
+        import importlib.util as _iu
+        bad = ["reporter", "trading_signal", "paper_trader"]
+        found = [m for m in bad if _iu.find_spec("monitor." + m)]
+        if found:
+            self._send("⚠️ OLD MODULES FOUND: " + ", ".join(found))
+        else:
+            self._send("✅ Code is clean - no old modules")
+
         self._send("✅ Monitor v3.0 启动 | 纯通知 无报告")
 
         while self._running:
