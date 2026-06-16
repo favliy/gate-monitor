@@ -7,7 +7,7 @@
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
-        value: "8946385457:AAFG3RKJmDqmScuebTbKfw_zDvAE1zrLq6w"
+        value: "8822386674:AAFb7O3ziDBS358kI14ykXSl3lI9OsFl6vw"
       - key: TELEGRAM_CHAT_ID
         sync: false
         value: "-1003974837328"
