@@ -37,11 +37,32 @@ WHALE_INTERVAL = 300      # Whale batch: every 5min
 
 
 class HealthHandler(BaseHTTPRequestHandler):
+    app_ref = None
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path == "/diag" and HealthHandler.app_ref:
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain; charset=utf-8")
+            self.end_headers()
+            app = HealthHandler.app_ref
+            ticks = app.fetcher.get_all_tickers()
+            lines = [
+                f"tickers={len(ticks)}",
+                f"fetcher_running={app.fetcher._running}",
+                f"pump_1m={len(app.pump_detector._current_pumps)}",
+                f"dump_1m={len(app.dump_detector._current_dumps)}",
+                f"last_pump={len(app._last_pump)}",
+                f"last_dump={len(app._last_dump)}",
+                f"oi_spikes={len(app.oi_detector._current_spikes)}",
+                f"errors={app.health_guard.total_errors}",
+                f"tg_ok={app.telegram.enabled}",
+                f"price_hist={sum(len(v) for v in app.pump_detector._price_history.values())}",
+            ]
+            self.wfile.write("\n".join(lines).encode())
+        else:
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
     def log_message(self, *a):
         pass
 
@@ -320,6 +341,7 @@ class MonitorApp:
 def main():
     threading.Thread(target=start_health_server, daemon=True).start()
     app = MonitorApp()
+    HealthHandler.app_ref = app
     signal.signal(signal.SIGINT, lambda s, f: app.shutdown() or sys.exit(0))
     signal.signal(signal.SIGTERM, lambda s, f: app.shutdown() or sys.exit(0))
     app.run()
