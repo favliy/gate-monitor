@@ -154,10 +154,10 @@ class MonitorApp:
         self._last_oi_fetch = 0
         self._last_whale = 0
         self._last_funding_report = 0
-        self._last_pump = {}
-        self._last_dump = {}
-        self._last_5m_pump = {}
-        self._last_5m_dump = {}
+        self._last_alert = {}  # unified dedup
+        
+        
+        
         self._last_oi_alert = {}
         self._price_snap = {}
 
@@ -261,9 +261,9 @@ class MonitorApp:
 
                 for p in pumps:
                     sym = p["symbol"]
-                    if now - self._last_pump.get(sym, 0) < DEDUP_SECONDS:
+                    if now - self._last_alert.get(sym, 0) < DEDUP_SECONDS:
                         continue
-                    self._last_pump[sym] = now
+                    self._last_alert[sym] = now
                     vol_m = p.get("volume", 0) / 1_000_000
                     msg = (
                         "📈 *" + sym + " 拉升 +" + str(round(p["pump_pct"], 1)) + "%*\n"
@@ -273,9 +273,9 @@ class MonitorApp:
 
                 for d in dumps:
                     sym = d["symbol"]
-                    if now - self._last_dump.get(sym, 0) < DEDUP_SECONDS:
+                    if now - self._last_alert.get(sym, 0) < DEDUP_SECONDS:
                         continue
-                    self._last_dump[sym] = now
+                    self._last_alert[sym] = now
                     vol_m = d.get("volume", 0) / 1_000_000
                     msg = (
                         "📉 *" + sym + " 下跌 " + str(round(d["drop_pct"], 1)) + "%*\n"
@@ -288,9 +288,9 @@ class MonitorApp:
                 pumps_5m = self.pump_detector.check_5m_pumps(tickers)
                 for p in pumps_5m:
                     sym = p["symbol"]
-                    if now - self._last_pump.get(sym, 0) < DEDUP_5M:
+                    if now - self._last_alert.get(sym, 0) < DEDUP_5M:
                         continue
-                    self._last_pump[sym] = now
+                    self._last_alert[sym] = now
                     vm = p.get("volume", 0) / 1_000_000
                     self._send(chr(0x1f525) + " *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
@@ -298,9 +298,9 @@ class MonitorApp:
                 dumps_5m = self.dump_detector.check_5m_dumps(tickers)
                 for d in dumps_5m:
                     sym = d["symbol"]
-                    if now - self._last_dump.get(sym, 0) < DEDUP_5M:
+                    if now - self._last_alert.get(sym, 0) < DEDUP_5M:
                         continue
-                    self._last_dump[sym] = now
+                    self._last_alert[sym] = now
                     vm = d.get("volume", 0) / 1_000_000
                     self._send(chr(0x1f4c9) + " *" + sym + " 5m " + str(round(d["pct"], 1)) + "% | " + str(d["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
