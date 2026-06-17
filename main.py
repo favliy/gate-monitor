@@ -5,6 +5,7 @@ import time
 import io
 import os
 import threading
+import requests
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
@@ -212,7 +213,6 @@ class MonitorApp:
 
         self.fetcher.start()
         self.health_guard.feed_data()
-
         logger.info("Telegram sender ready")
 
         self.health_guard.start()
@@ -242,6 +242,12 @@ class MonitorApp:
                     continue
 
                 self.health_guard.feed_data()
+                # Keep-alive via external URL
+                try:
+                    requests.get("https://gate-monitor-1.onrender.com/", timeout=5)
+                except Exception:
+                    pass
+
 
                 if not self._price_snap:
                     for sym, info in tickers.items():
