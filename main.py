@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import signal
 import sys
 import time
@@ -51,12 +51,12 @@ class HealthHandler(BaseHTTPRequestHandler):
                 f"fetcher_running={app.fetcher._running}",
                 f"pump_1m={len(app.pump_detector._current_pumps)}",
                 f"dump_1m={len(app.dump_detector._current_dumps)}",
-                f"last_pump={len(app._last_alert)}",
-                f"last_dump={len(app._last_alert)}",
+                f"alerts={len(app._last_alert)}",
                 f"oi_spikes={len(app.oi_detector._current_spikes)}",
                 f"errors={app.health_guard.total_errors}",
                 f"tg_ok={app.telegram.enabled}",
                 f"price_hist={sum(len(v) for v in app.pump_detector._price_history.values())}",
+                f"hot_hist={sum(len(v) for v in app._hot_price_history.values())}",
             ]
             self.wfile.write("\n".join(lines).encode())
         else:
@@ -128,7 +128,7 @@ class HealthGuard:
                     uptime = int(now - self.app._window_start_ts)
                     h, m = uptime // 3600, (uptime % 3600) // 60
                     self.app._send(
-                        f"🩺 *健康* {h}h{m}m | 合约{self.last_ticker_count} | "
+                        f"🛡 *健康* {h}h{m}m | 合约{self.last_ticker_count} | "
                         f"重启{self.fetcher_restarts} | 异常{self.total_errors}")
             except Exception as e:
                 logger.error(f"[HG] {e}")
@@ -155,12 +155,10 @@ class MonitorApp:
         self._last_whale = 0
         self._last_funding_report = 0
         self._last_alert = {}  # unified dedup
-        
-        
-        
         self._last_oi_alert = {}
         self._price_snap = {}
         self._hot_price_history = {}  # prices for coins not in main monitoring
+        self._hot_last_scan = 0
         
     def _send(self, text):
         if self.telegram.enabled and text:
@@ -172,82 +170,8 @@ class MonitorApp:
                 logger.error("TG: " + str(e))
                 self.health_guard.feed_tg_fail()
 
-    # ── 1min pump/dump formatter ────────────────────────────────
-
-
-    def _fmt_whale_batch(self, results):
-        """Batch all whale signals into one clean message."""
-        lines = []
-        for f in results.get("funding", [])[:3]:
-            lines.append(f"📊 {f['symbol']} 费{f['funding']:+.3f}%")
-        for d in results.get("depth", [])[:3]:
-            lines.append(f"📖 {d['symbol']} bid{d['bid_depth']:.0f} ask{d['ask_depth']:.0f}")
-        for d in results.get("oi_div", [])[:3]:
-            lines.append(f"👀 {d['symbol']} 价{d['price_chg']:+.1f}% OI{d['oi_chg']:+.1f}%")
-        for sym, trades in [(t['symbol'], t) for t in results.get("large_trades", [])][:2]:
-            lines.append(f"🐳 {sym} 大单")
-        if not lines:
-            return None
-
-        return "🔍 *庄家监控 " + time.strftime("%H:%M") + "*\n" + "\n\n".join(lines)
-
-
-    # Hot-coin 1min: independent fetch, no volume filter
-
-    def _scan_hot_1min(self):
-        """Fetch ALL USDT futures tickers (no volume filter), detect 24h>=20% + 1min>=2%.
-        Maintains independent price history for coins not in main monitoring."""
-        try:
-            resp = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=15)
-            resp.raise_for_status()
-            now = time.time()
-            alerts = []
-            for t in resp.json():
-                contract = t.get("contract", "")
-                if not contract.endswith("_USDT"):
-                    continue
-                chg = float(t.get("change_percentage", 0))
-                if chg < 20:
-                    continue
-                price = float(t.get("last", 0))
-                if price <= 0:
-                    continue
-                # Track price history independently
-                if contract not in self._hot_price_history:
-                    self._hot_price_history[contract] = []
-                self._hot_price_history[contract].append((now, price))
-                # Clean up old entries
-                cutoff = now - 120
-                self._hot_price_history[contract] = [
-                    (ts, p) for ts, p in self._hot_price_history[contract] if ts >= cutoff
-                ]
-                # Check 1min change
-                hist = self._hot_price_history[contract]
-                target = now - 60
-                old_price = None
-                for ts, p in reversed(hist):
-                    if ts <= target:
-                        old_price = p
-                        break
-                if old_price and old_price > 0:
-                    pct = ((price - old_price) / old_price) * 100
-                    if abs(pct) >= 2:
-                        if now - self._last_alert.get(contract, 0) < 300:
-                            continue
-                        self._last_alert[contract] = now
-                        direction = "拉升" if pct > 0 else "下跌"
-                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
-                        logger.info(f"HOT_1M {contract} {pct:+.1f}%")
-                        alerts.append(contract)
-            return alerts
-        except Exception as e:
-            logger.debug(f"Hot 1min scan: {e}")
-            return []
-
-    # Funding rate scan
-
     def _scan_funding_rates(self, tickers: dict) -> list:
-        """Return list of {symbol, rate_pct} for |rate| > 0.5%."""
+        """Return list of {symbol, rate_pct} for |rate| > 0.3%."""
         extreme = []
         for sym, info in tickers.items():
             fr = float(info.get("funding_rate", 0) or 0)
@@ -256,12 +180,71 @@ class MonitorApp:
                 extreme.append({"symbol": sym, "rate_pct": round(rate_pct, 4)})
         extreme.sort(key=lambda x: abs(x["rate_pct"]), reverse=True)
         return extreme
-    # ── Main loop ───────────────────────────────────────────────
+
+    # ── Hot-coin 1min scan (independent API, no volume filter) ──
+
+    def _scan_hot_1min(self):
+        """Fetch ALL USDT futures tickers (no volume filter), detect 24h>=20% + 1min>=2%.
+        Maintains independent price history. Shared dedup with main alerts."""
+        try:
+            resp = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=15)
+            resp.raise_for_status()
+            now = time.time()
+            found = 0
+            for t in resp.json():
+                contract = t.get("contract", "")
+                if not contract.endswith("_USDT"):
+                    continue
+                chg = float(t.get("change_percentage", 0))
+                if chg < 20:
+                    continue
+                found += 1
+                price = float(t.get("last", 0))
+                if price <= 0:
+                    continue
+                # Track price history
+                if contract not in self._hot_price_history:
+                    self._hot_price_history[contract] = []
+                self._hot_price_history[contract].append((now, price))
+                # Clean old entries (> 2min)
+                cutoff = now - 120
+                self._hot_price_history[contract] = [
+                    (ts, p) for ts, p in self._hot_price_history[contract] if ts >= cutoff
+                ]
+                # Check 1min change
+                hist = self._hot_price_history[contract]
+                if len(hist) < 2:
+                    continue
+                target = now - 60
+                old_price = None
+                for ts, p in reversed(hist):
+                    if ts <= target:
+                        old_price = p
+                        break
+                # If no entry older than 60s, use oldest available
+                if old_price is None:
+                    old_price = hist[0][1]
+                if old_price and old_price > 0:
+                    pct = ((price - old_price) / old_price) * 100
+                    if abs(pct) >= 2:
+                        # Unified dedup
+                        if now - self._last_alert.get(contract, 0) < 300:
+                            continue
+                        self._last_alert[contract] = now
+                        direction = "拉升" if pct > 0 else "下跌"
+                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
+                        logger.info(f"HOT_1M {contract} {pct:+.1f}% (24h+{chg:.0f}%)")
+            if found > 0:
+                logger.debug(f"Hot scan: {found} candidates with 24h>=20%")
+        except Exception as e:
+            logger.debug(f"Hot 1min scan error: {e}")
+
+    # ── Main loop ──
 
     def run(self):
         logger.info("=" * 50)
-        logger.info("  Gate.io Futures Monitor v3.2")
-        logger.info("  1min >=2% | OI >=5% | Whale batch 5min")
+        logger.info("  Gate.io Futures Monitor v3.3")
+        logger.info("  1min>=2% | 5min>=3.5% | OI>=5% | Hot-coin | Funding")
         logger.info("=" * 50)
 
         self.fetcher.start()
@@ -271,20 +254,12 @@ class MonitorApp:
         self.health_guard.start()
         self._window_start_ts = time.time()
         self._price_snap = {}
-        self._hot_price_history = {}  # prices for coins not in main monitoring
+        self._hot_price_history = {}
+        self._hot_last_scan = 0
         
-        logger.info("Monitoring started. [v3-clean]")
+        logger.info("Monitoring started. [v3.3-hotfix]")
 
-        # Verify clean environment
-        import importlib.util as _iu
-        bad = ["reporter", "trading_signal", "paper_trader"]
-        found = [m for m in bad if _iu.find_spec("monitor." + m)]
-        if found:
-            self._send("⚠️ OLD MODULES FOUND: " + ", ".join(found))
-        else:
-            self._send("✅ Code is clean - no old modules")
-
-        self._send("✅ Monitor v3.0 启动 | 纯通知 无报告")
+        self._send("✅ Monitor v3.3 启动 | 纯通知 | 涨幅榜已修复")
 
         while self._running:
             try:
@@ -296,18 +271,17 @@ class MonitorApp:
                     continue
 
                 self.health_guard.feed_data()
-                # Keep-alive via external URL
+                # Keep-alive
                 try:
                     requests.get("https://gate-monitor-1.onrender.com/", timeout=5)
                 except Exception:
                     pass
 
-
                 if not self._price_snap:
                     for sym, info in tickers.items():
                         self._price_snap[sym] = info.get("price", 0)
 
-                # ═══ 1min pump/dump ═══
+                # ── 1min pump/dump ──
                 self.pump_detector.update_prices(tickers)
                 self.dump_detector.update_prices(tickers)
                 pumps = self.pump_detector.check_pumps(tickers)
@@ -321,7 +295,7 @@ class MonitorApp:
                     vol_m = p.get("volume", 0) / 1_000_000
                     msg = (
                         "📈 *" + sym + " 拉升 +" + str(round(p["pump_pct"], 1)) + "%*\n"
-                        "📊 " + str(p["current_price"]) + " | 1min +" + str(round(p["pump_pct"], 1)) + "% | 量 " + str(round(vol_m)) + "M"
+                        "💹 " + str(p["current_price"]) + " | 1min +" + str(round(p["pump_pct"], 1)) + "% | 量" + str(round(vol_m)) + "M"
                     )
                     self._send(msg)
 
@@ -333,12 +307,11 @@ class MonitorApp:
                     vol_m = d.get("volume", 0) / 1_000_000
                     msg = (
                         "📉 *" + sym + " 下跌 " + str(round(d["drop_pct"], 1)) + "%*\n"
-                        "📊 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"], 1)) + "% | 量 " + str(round(vol_m)) + "M"
+                        "💹 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"], 1)) + "% | 量" + str(round(vol_m)) + "M"
                     )
                     self._send(msg)
 
-
-                # 5min pump/dump
+                # ── 5min pump/dump ──
                 pumps_5m = self.pump_detector.check_5m_pumps(tickers)
                 for p in pumps_5m:
                     sym = p["symbol"]
@@ -346,32 +319,8 @@ class MonitorApp:
                         continue
                     self._last_alert[sym] = now
                     vm = p.get("volume", 0) / 1_000_000
-                    self._send(chr(0x1f525) + " *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M")
+                    self._send("🔥 *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
-
-                # Hot-coin 1min: 24h >=20% + 1min anomaly, no volume filter
-                for sym, info in tickers.items():
-                    if info.get("change_pct", 0) < 20:
-                        continue
-                    history = self.pump_detector._price_history.get(sym, [])
-                    if len(history) < 2:
-                        continue
-                    price = info.get("price", 0)
-                    target = now - 60
-                    old_price = None
-                    for ts, p in reversed(history):
-                        if ts <= target:
-                            old_price = p
-                            break
-                    if old_price and old_price > 0:
-                        pct = ((price - old_price) / old_price) * 100
-                        if abs(pct) >= 2:
-                            if now - self._last_alert.get(sym, 0) < 300:
-                                continue
-                            self._last_alert[sym] = now
-                            direction = "拉升" if pct > 0 else "下跌"
-                            self._send(f"🔥 *{sym} 24h+{info.get("change_pct",0):.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
-                            logger.info(f"HOT_1M {sym} {pct:+.1f}%")
 
                 dumps_5m = self.dump_detector.check_5m_dumps(tickers)
                 for d in dumps_5m:
@@ -380,11 +329,15 @@ class MonitorApp:
                         continue
                     self._last_alert[sym] = now
                     vm = d.get("volume", 0) / 1_000_000
-                    self._send(chr(0x1f4c9) + " *" + sym + " 5m " + str(round(d["pct"], 1)) + "% | " + str(d["price"]) + " | " + str(round(vm)) + "M")
+                    self._send("📉 *" + sym + " 5m " + str(round(d["pct"], 1)) + "% | " + str(d["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
 
+                # ── Hot-coin scan (independent, every 30s) ──
+                if now - self._hot_last_scan >= 30:
+                    self._scan_hot_1min()
+                    self._hot_last_scan = now
 
-                # ═══ 60s: OI ═══
+                # ── 60s: OI ──
                 if now - self._last_oi_fetch >= 60:
                     oi_data = self.fetcher.fetch_all_open_interest()
                     if oi_data:
@@ -394,26 +347,23 @@ class MonitorApp:
                             sym = s["symbol"]
                             if now - self._last_oi_alert.get(sym, 0) < OI_DEDUP:
                                 continue
-                            # Only alert if OI > 2M USD (skip micro caps)
                             if s["current_oi"] < 2_000_000:
                                 continue
                             self._last_oi_alert[sym] = now
                             self._send(
                                 f"⚡ *{sym} OI异动*\n"
-                                f"5min：+{s['oi_change_pct']}%｜OI：{s['current_oi']/1e6:.1f}M")
+                                f"5min：{s['oi_change_pct']}%｜OI：{s['current_oi']/1e6:.1f}M")
                             logger.info(f"OI {sym} +{round(s['oi_change_pct'],2)}%")
                     self._last_oi_fetch = now
 
-                # Whale monitoring disabled
-
-                # 30min: Funding rate extremes
+                # ── 30min: Funding rate extremes ──
                 if now - self._last_funding_report >= 1800:
                     extreme = self._scan_funding_rates(tickers)
                     if extreme:
                         lines = ["[费率异动] " + time.strftime("%H:%M")]
                         for e in extreme[:10]:
                             emoji = "[L]" if e["rate_pct"] > 0 else "[S]"
-                            lines.append(f"{emoji} {e["symbol"]} {e["rate_pct"]:+.3f}%")
+                            lines.append(f"{emoji} {e['symbol']} {e['rate_pct']:+.3f}%")
                         self._send("\n".join(lines))
                         logger.info(f"Funding report: {len(extreme)} extreme rates")
                     self._last_funding_report = now
