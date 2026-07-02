@@ -160,6 +160,7 @@ class MonitorApp:
         
         self._last_oi_alert = {}
         self._price_snap = {}
+        self._hot_price_history = {}  # prices for coins not in main monitoring
         
     def _send(self, text):
         if self.telegram.enabled and text:
@@ -194,7 +195,8 @@ class MonitorApp:
     # Hot-coin 1min: independent fetch, no volume filter
 
     def _scan_hot_1min(self):
-        """Fetch ALL USDT futures tickers (no volume filter), detect 24h>=20% + 1min>=2%."""
+        """Fetch ALL USDT futures tickers (no volume filter), detect 24h>=20% + 1min>=2%.
+        Maintains independent price history for coins not in main monitoring."""
         try:
             resp = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=15)
             resp.raise_for_status()
@@ -210,11 +212,20 @@ class MonitorApp:
                 price = float(t.get("last", 0))
                 if price <= 0:
                     continue
-                # Get 1min ago price from existing history or ticker data
-                history = self.pump_detector._price_history.get(contract, [])
-                old_price = None
+                # Track price history independently
+                if contract not in self._hot_price_history:
+                    self._hot_price_history[contract] = []
+                self._hot_price_history[contract].append((now, price))
+                # Clean up old entries
+                cutoff = now - 120
+                self._hot_price_history[contract] = [
+                    (ts, p) for ts, p in self._hot_price_history[contract] if ts >= cutoff
+                ]
+                # Check 1min change
+                hist = self._hot_price_history[contract]
                 target = now - 60
-                for ts, p in reversed(history):
+                old_price = None
+                for ts, p in reversed(hist):
                     if ts <= target:
                         old_price = p
                         break
@@ -260,6 +271,7 @@ class MonitorApp:
         self.health_guard.start()
         self._window_start_ts = time.time()
         self._price_snap = {}
+        self._hot_price_history = {}  # prices for coins not in main monitoring
         
         logger.info("Monitoring started. [v3-clean]")
 
