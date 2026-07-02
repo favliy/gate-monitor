@@ -191,6 +191,48 @@ class MonitorApp:
         return "🔍 *庄家监控 " + time.strftime("%H:%M") + "*\n" + "\n\n".join(lines)
 
 
+    # Hot-coin 1min: independent fetch, no volume filter
+
+    def _scan_hot_1min(self):
+        """Fetch ALL USDT futures tickers (no volume filter), detect 24h>=20% + 1min>=2%."""
+        try:
+            resp = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=15)
+            resp.raise_for_status()
+            now = time.time()
+            alerts = []
+            for t in resp.json():
+                contract = t.get("contract", "")
+                if not contract.endswith("_USDT"):
+                    continue
+                chg = float(t.get("change_percentage", 0))
+                if chg < 20:
+                    continue
+                price = float(t.get("last", 0))
+                if price <= 0:
+                    continue
+                # Get 1min ago price from existing history or ticker data
+                history = self.pump_detector._price_history.get(contract, [])
+                old_price = None
+                target = now - 60
+                for ts, p in reversed(history):
+                    if ts <= target:
+                        old_price = p
+                        break
+                if old_price and old_price > 0:
+                    pct = ((price - old_price) / old_price) * 100
+                    if abs(pct) >= 2:
+                        if now - self._last_alert.get(contract, 0) < 300:
+                            continue
+                        self._last_alert[contract] = now
+                        direction = "拉升" if pct > 0 else "下跌"
+                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
+                        logger.info(f"HOT_1M {contract} {pct:+.1f}%")
+                        alerts.append(contract)
+            return alerts
+        except Exception as e:
+            logger.debug(f"Hot 1min scan: {e}")
+            return []
+
     # Funding rate scan
 
     def _scan_funding_rates(self, tickers: dict) -> list:
