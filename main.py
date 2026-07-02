@@ -160,8 +160,7 @@ class MonitorApp:
         
         self._last_oi_alert = {}
         self._price_snap = {}
-        self._last_hot_alert = {}
-
+        
     def _send(self, text):
         if self.telegram.enabled and text:
             try:
@@ -219,8 +218,7 @@ class MonitorApp:
         self.health_guard.start()
         self._window_start_ts = time.time()
         self._price_snap = {}
-        self._last_hot_alert = {}
-
+        
         logger.info("Monitoring started. [v3-clean]")
 
         # Verify clean environment
@@ -314,9 +312,9 @@ class MonitorApp:
                     if old_price and old_price > 0:
                         pct = ((price - old_price) / old_price) * 100
                         if abs(pct) >= 2:
-                            if now - self._last_hot_alert.get(sym, 0) < 300:
+                            if now - self._last_alert.get(sym, 0) < 300:
                                 continue
-                            self._last_hot_alert[sym] = now
+                            self._last_alert[sym] = now
                             direction = "拉升" if pct > 0 else "下跌"
                             self._send(f"🔥 *{sym} 24h+{info.get("change_pct",0):.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
                             logger.info(f"HOT_1M {sym} {pct:+.1f}%")
