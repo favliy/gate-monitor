@@ -260,7 +260,7 @@ class MonitorApp:
 
     def run(self):
         logger.info("=" * 50)
-        logger.info("  Gate.io Futures Monitor + Whale Detector")
+        logger.info("  Gate.io Futures Monitor v3.2")
         logger.info("  1min >=2% | OI >=5% | Whale batch 5min")
         logger.info("=" * 50)
 
