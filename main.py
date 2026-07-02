@@ -160,6 +160,7 @@ class MonitorApp:
         
         self._last_oi_alert = {}
         self._price_snap = {}
+        self._last_hot_alert = {}
 
     def _send(self, text):
         if self.telegram.enabled and text:
@@ -218,6 +219,7 @@ class MonitorApp:
         self.health_guard.start()
         self._window_start_ts = time.time()
         self._price_snap = {}
+        self._last_hot_alert = {}
 
         logger.info("Monitoring started. [v3-clean]")
 
@@ -294,6 +296,30 @@ class MonitorApp:
                     vm = p.get("volume", 0) / 1_000_000
                     self._send(chr(0x1f525) + " *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M")
                     logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
+
+                # Hot-coin 1min: 24h >=20% + 1min anomaly, no volume filter
+                for sym, info in tickers.items():
+                    if info.get("change_pct", 0) < 20:
+                        continue
+                    history = self.pump_detector._price_history.get(sym, [])
+                    if len(history) < 2:
+                        continue
+                    price = info.get("price", 0)
+                    target = now - 60
+                    old_price = None
+                    for ts, p in reversed(history):
+                        if ts <= target:
+                            old_price = p
+                            break
+                    if old_price and old_price > 0:
+                        pct = ((price - old_price) / old_price) * 100
+                        if abs(pct) >= 2:
+                            if now - self._last_hot_alert.get(sym, 0) < 300:
+                                continue
+                            self._last_hot_alert[sym] = now
+                            direction = "拉升" if pct > 0 else "下跌"
+                            self._send(f"🔥 *{sym} 24h+{info.get("change_pct",0):.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
+                            logger.info(f"HOT_1M {sym} {pct:+.1f}%")
 
                 dumps_5m = self.dump_detector.check_5m_dumps(tickers)
                 for d in dumps_5m:
