@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "hertzflow": {
+      "source": "HertzFlow/hertzflow-skills",
+      "sourceType": "github",
+      "skillPath": "skills/hertzflow/SKILL.md",
+      "computedHash": "5c5e02b934c13c50ea1498602cd6c8886266b2db8ec8062a864ce932aebee111"
+    }
+  }
+}

@@ -20,6 +20,7 @@ from monitor.gate_fetcher import GateFuturesFetcher
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
 from monitor.telegram_sender import TelegramSender
 from monitor.whale_monitor import WhaleMonitor
+from monitor.binance_listing import BinanceListingMonitor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -148,6 +149,7 @@ class MonitorApp:
         self.oi_detector = OIDetector()
         self.telegram = TelegramSender(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         self.whale_monitor = WhaleMonitor()
+        self.binance_listing = BinanceListingMonitor()
         self.health_guard = HealthGuard(self)
         self._running = True
         self._window_start_ts = time.time()
@@ -244,7 +246,7 @@ class MonitorApp:
     def run(self):
         logger.info("=" * 50)
         logger.info("  Gate.io Futures Monitor v3.3")
-        logger.info("  1min>=2% | 5min>=3.5% | OI>=5% | Hot-coin | Funding")
+        logger.info("  1min>=2% | 5min>=3.5% | OI>=5% | Hot-coin | Funding | Binance Listing")
         logger.info("=" * 50)
 
         self.fetcher.start()
@@ -336,6 +338,18 @@ class MonitorApp:
                 if now - self._hot_last_scan >= 30:
                     self._scan_hot_1min()
                     self._hot_last_scan = now
+
+                # ── Binance listing/delisting ──
+                result = self.binance_listing.check()
+                if result:
+                    for sym in result.get("new", []):
+                        base = sym.replace("USDT", "_USDT")
+                        self._send("\U0001f195 *\u5e01\u5b89\u4e0a\u65b0* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4e0a\u7ebf\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6")
+                        logger.info(f"BINANCE_NEW {sym}")
+                    for sym in result.get("delisted", []):
+                        base = sym.replace("USDT", "_USDT")
+                        self._send("\U0001f53b *\u5e01\u5b89\u4e0b\u67b6* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4ece\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6\u4e0b\u67b6")
+                        logger.info(f"BINANCE_DELIST {sym}")
 
                 # ── 60s: OI ──
                 if now - self._last_oi_fetch >= 60:

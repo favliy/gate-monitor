@@ -1,0 +1,4 @@
+FROM alpine:3.19
+RUN apk add --no-cache curl
+ENV MONITOR_URL=https://gate-monitor-1.onrender.com
+CMD curl -s -o /dev/null -w "%{http_code}" $MONITOR_URL && echo " ping OK" || echo " ping FAIL"
