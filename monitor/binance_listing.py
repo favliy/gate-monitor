@@ -12,6 +12,7 @@ BINANCE_FAPI = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 LISTING_RE = re.compile(r'(?:Will List|Lists|Launches?)\s+(\w+USDT)\s+(?:Perpetual|USD)', re.IGNORECASE)
@@ -28,32 +29,51 @@ class BinanceListingMonitor:
         self._last_error = ""
         self._last_announce_ids = set()
 
-    def _fetch_announcements(self):
-        """Fetch latest futures announcements from Binance."""
-        params = {"type": "1", "catalogId": "48", "pageNo": "1", "pageSize": "10"}
+    def _try_announce_params(self, params):
+        """Try a specific parameter combination for announcements."""
         try:
             resp = requests.get(BINANCE_ANNOUNCE, params=params, headers=HEADERS, timeout=20)
             if resp.status_code == 451:
-                return None, "HTTP 451 blocked"
+                return None, "HTTP 451"
             resp.raise_for_status()
             raw = resp.json()
-            # Handle various response formats
             if isinstance(raw, dict):
                 data = raw.get("data")
                 if isinstance(data, dict):
-                    articles = data.get("articles") or data.get("catalogues") or []
-                    if isinstance(articles, list):
+                    articles = data.get("articles") or data.get("catalogues") or data.get("list") or []
+                    if isinstance(articles, list) and articles:
                         return articles, None
-                if isinstance(data, list):
+                if isinstance(data, list) and data:
                     return data, None
-                articles = raw.get("articles") or raw.get("catalogues") or []
-                if isinstance(articles, list):
+                articles = raw.get("articles") or raw.get("catalogues") or raw.get("list") or []
+                if isinstance(articles, list) and articles:
                     return articles, None
-            if isinstance(raw, list):
+            if isinstance(raw, list) and raw:
                 return raw, None
-            return None, f"Unexpected format: {type(raw).__name__}"
+            return [], f"Empty/unknown format: {type(raw).__name__}"
         except Exception as e:
             return None, str(e)[:80]
+
+    def _fetch_announcements(self):
+        """Fetch latest futures announcements trying multiple param combos."""
+        param_sets = [
+            {"type": "1", "catalogId": "48", "pageNo": "1", "pageSize": "10"},
+            {"type": "1", "catalogId": 48, "pageNo": "1", "pageSize": "10"},
+            {"catalogId": "48", "pageNo": "1", "pageSize": "10"},
+            {"catalogId": 48, "pageNo": "1", "pageSize": "10"},
+            {"type": "1", "pageNo": "1", "pageSize": "10"},
+            {"pageNo": "1", "pageSize": "10"},
+        ]
+        for params in param_sets:
+            articles, err = self._try_announce_params(params)
+            if articles is not None:
+                if articles:
+                    logger.info(f"Announcements: {len(articles)} articles (params={params})")
+                return articles, None
+            # If blocked, stop trying
+            if err and "451" in err:
+                return None, err
+        return None, "All param combos failed"
 
     def _parse_announcements(self, articles):
         """Parse articles for listing/delisting symbols."""
@@ -70,15 +90,13 @@ class BinanceListingMonitor:
                 continue
             if aid in self._last_announce_ids:
                 continue
-            if now_ms - t > 7 * 86400 * 1000 and t > 0:
+            if t > 0 and now_ms - t > 7 * 86400 * 1000:
                 continue
             self._last_announce_ids.add(aid)
-            # Check listing
             m = LISTING_RE.search(title)
             if m:
                 new_syms.add(m.group(1))
                 logger.info(f"BINANCE LISTING: {m.group(1)} | {title}")
-            # Check delisting
             m = DELIST_RE.search(title)
             if m:
                 del_syms.add(m.group(1))
@@ -115,47 +133,44 @@ class BinanceListingMonitor:
             self._last_error = "OK (exchangeInfo)"
             return symbols, None, None
 
-        # Fallback: use announcements only
+        # Fallback: use announcements
         articles, err = self._fetch_announcements()
         if articles is not None:
             new_syms, del_syms = self._parse_announcements(articles)
-            self._last_error = f"Announcements: {len(articles)} articles"
+            self._last_error = f"Ann: {len(articles)} articles"
             return self._known_symbols, new_syms, del_syms
 
         self._last_error = err or "Unknown"
         return set(), None, None
 
     def check(self):
-        """Check for new listings and delistings."""
         try:
             now = time.time()
             if now - self._last_check < self.CHECK_INTERVAL:
                 return None
 
-            current, new_from_ann, del_from_ann = self._fetch_symbols()
+            current, new_ann, del_ann = self._fetch_symbols()
             self._last_check = now
 
-            if not current and not new_from_ann and not del_from_ann:
+            if not current and not new_ann and not del_ann:
                 return None
 
-            # Handle announcement-based detection
-            if new_from_ann:
-                for sym in new_from_ann:
+            if new_ann:
+                for sym in new_ann:
                     self._known_symbols.add(sym)
-            if del_from_ann:
-                for sym in del_from_ann:
+            if del_ann:
+                for sym in del_ann:
                     self._known_symbols.discard(sym)
 
             if not self._initialized:
                 if current:
                     self._known_symbols = current
                 self._initialized = True
-                logger.info(f"Binance monitor initialized: {len(self._known_symbols)} symbols")
-                return {"new": sorted(new_from_ann or []), "delisted": sorted(del_from_ann or [])}
+                logger.info(f"Binance init: {len(self._known_symbols)} symbols")
+                return {"new": sorted(new_ann or []), "delisted": sorted(del_ann or [])}
 
-            # Compute diff if we have full list
-            new_listings = list(new_from_ann or [])
-            delistings = list(del_from_ann or [])
+            new_listings = list(new_ann or [])
+            delistings = list(del_ann or [])
             if current:
                 new_listings += sorted(current - self._known_symbols)
                 delistings += sorted(self._known_symbols - current)
@@ -166,7 +181,7 @@ class BinanceListingMonitor:
                 "delisted": sorted(set(delistings)),
             }
         except Exception as e:
-            logger.error(f"Binance check exception: {e}")
+            logger.error(f"Binance check: {e}")
             self._last_error = str(e)[:100]
             self._last_check = time.time()
             return None
