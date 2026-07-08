@@ -58,6 +58,9 @@ class HealthHandler(BaseHTTPRequestHandler):
                 f"tg_ok={app.telegram.enabled}",
                 f"price_hist={sum(len(v) for v in app.pump_detector._price_history.values())}",
                 f"hot_hist={sum(len(v) for v in app._hot_price_history.values())}",
+                f"binance_init={app.binance_listing._initialized}",
+                f"binance_symbols={len(app.binance_listing._known_symbols)}",
+                f"binance_last={int(time.time() - app.binance_listing._last_check)}s_ago",
             ]
             self.wfile.write("\n".join(lines).encode())
         else:
@@ -245,7 +248,7 @@ class MonitorApp:
 
     def run(self):
         logger.info("=" * 50)
-        logger.info("  Gate.io Futures Monitor v3.3")
+        logger.info("  Gate.io Futures Monitor v3.4")
         logger.info("  1min>=2% | 5min>=3.5% | OI>=5% | Hot-coin | Funding | Binance Listing")
         logger.info("=" * 50)
 
@@ -259,9 +262,9 @@ class MonitorApp:
         self._hot_price_history = {}
         self._hot_last_scan = 0
         
-        logger.info("Monitoring started. [v3.3-hotfix]")
+        logger.info("Monitoring started. [v3.4-binance]")
 
-        self._send("✅ Monitor v3.3 启动 | 纯通知 | 涨幅榜已修复")
+        self._send("✅ Monitor v3.4 启动 | 纯通知 | 涨幅榜已修复")
 
         while self._running:
             try:
