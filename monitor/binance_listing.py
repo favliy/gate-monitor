@@ -29,56 +29,59 @@ class BinanceListingMonitor:
         self._last_error = ""
         self._last_announce_ids = set()
 
-    def _try_announce_params(self, params):
-        """Try a specific parameter combination for announcements."""
-        try:
-            resp = requests.get(BINANCE_ANNOUNCE, params=params, headers=HEADERS, timeout=20)
-            if resp.status_code == 451:
-                return None, "HTTP 451"
-            resp.raise_for_status()
-            raw = resp.json()
-            if isinstance(raw, dict):
-                data = raw.get("data")
-                if isinstance(data, dict):
-                    articles = data.get("articles") or data.get("catalogues") or data.get("list") or []
-                    if isinstance(articles, list) and articles:
-                        return articles, None
-                if isinstance(data, list) and data:
-                    return data, None
-                articles = raw.get("articles") or raw.get("catalogues") or raw.get("list") or []
-                if isinstance(articles, list) and articles:
-                    return articles, None
-            if isinstance(raw, list) and raw:
-                return raw, None
-            return [], f"Empty/unknown format: {type(raw).__name__}"
-        except Exception as e:
-            return None, str(e)[:80]
-
     def _fetch_announcements(self):
-        """Fetch latest futures announcements trying multiple param combos."""
-        param_sets = [
-            {"type": "1", "catalogId": "48", "pageNo": "1", "pageSize": "10"},
-            {"type": "1", "catalogId": 48, "pageNo": "1", "pageSize": "10"},
-            {"catalogId": "48", "pageNo": "1", "pageSize": "10"},
-            {"catalogId": 48, "pageNo": "1", "pageSize": "10"},
-            {"type": "1", "pageNo": "1", "pageSize": "10"},
-            {"pageNo": "1", "pageSize": "10"},
-        ]
-        for params in param_sets:
-            articles, err = self._try_announce_params(params)
-            if articles is not None:
-                if articles:
-                    logger.info(f"Announcements: {len(articles)} articles (params={params})")
-                return articles, None
-            # If blocked, stop trying
-            if err and "451" in err:
-                return None, err
-        return None, "All param combos failed"
+        """Fetch latest futures announcements trying multiple methods."""
+        # Method 1: CMS article list
+        for params in [
+            {"type": 1, "catalogId": 48, "pageNo": 1, "pageSize": 10},
+            {"catalogId": 48, "pageNo": 1, "pageSize": 10},
+            {"pageNo": 1, "pageSize": 10},
+        ]:
+            try:
+                resp = requests.get(BINANCE_ANNOUNCE, params=params, headers=HEADERS, timeout=20)
+                if resp.status_code == 451:
+                    continue
+                resp.raise_for_status()
+                raw = resp.json()
+                # Log first 200 chars of raw response for debugging
+                logger.info(f"Binance CMS raw keys: {list(raw.keys()) if isinstance(raw, dict) else type(raw).__name__}")
+                if isinstance(raw, dict):
+                    for key in ["data", "articles", "catalogs", "list", "rows"]:
+                        val = raw.get(key)
+                        if isinstance(val, list) and val:
+                            logger.info(f"Found articles in key='{key}': {len(val)} items")
+                            return val, None
+                        if isinstance(val, dict):
+                            for sub in ["articles", "catalogs", "list", "rows", "items"]:
+                                subval = val.get(sub)
+                                if isinstance(subval, list) and subval:
+                                    logger.info(f"Found articles in data.{sub}: {len(subval)} items")
+                                    return subval, None
+                if isinstance(raw, list) and raw:
+                    return raw, None
+            except Exception as e:
+                logger.debug(f"CMS params {params}: {e}")
+                continue
+
+        # Method 2: Try Binance Futures page HTML
+        try:
+            resp = requests.get(
+                "https://www.binance.com/en/support/announcement/futures-48",
+                headers=HEADERS,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                # Search for listing patterns in HTML
+                text = resp.text[:5000]
+                logger.info(f"Binance futures page HTML: {len(resp.text)} chars")
+                return [], "HTML page fetched (no parsing)"
+        except Exception as e:
+            logger.debug(f"HTML page: {e}")
+
+        return None, "All methods failed"
 
     def _parse_announcements(self, articles):
-        """Parse articles for listing/delisting symbols."""
-        new_syms = set()
-        del_syms = set()
+        new_syms, del_syms = set(), set()
         now_ms = int(time.time() * 1000)
         for a in articles:
             if not isinstance(a, dict):
@@ -104,7 +107,6 @@ class BinanceListingMonitor:
         return new_syms, del_syms
 
     def _fetch_exchange_info(self):
-        """Fallback: fetch directly from Binance exchangeInfo."""
         for url in [BINANCE_FSTREAM, BINANCE_FAPI]:
             try:
                 resp = requests.get(url, headers=HEADERS, timeout=20)
@@ -126,19 +128,16 @@ class BinanceListingMonitor:
         return set(), "All endpoints blocked"
 
     def _fetch_symbols(self):
-        """Fetch current Binance USDT perpetual symbols."""
-        # Try exchangeInfo first for full list
         symbols, err = self._fetch_exchange_info()
         if symbols:
             self._last_error = "OK (exchangeInfo)"
             return symbols, None, None
 
-        # Fallback: use announcements
         articles, err = self._fetch_announcements()
         if articles is not None:
-            new_syms, del_syms = self._parse_announcements(articles)
-            self._last_error = f"Ann: {len(articles)} articles"
-            return self._known_symbols, new_syms, del_syms
+            new_s, del_s = self._parse_announcements(articles)
+            self._last_error = f"Ann: {len(articles)} arts"
+            return self._known_symbols, new_s, del_s
 
         self._last_error = err or "Unknown"
         return set(), None, None
@@ -148,34 +147,28 @@ class BinanceListingMonitor:
             now = time.time()
             if now - self._last_check < self.CHECK_INTERVAL:
                 return None
-
             current, new_ann, del_ann = self._fetch_symbols()
             self._last_check = now
-
             if not current and not new_ann and not del_ann:
                 return None
-
             if new_ann:
                 for sym in new_ann:
                     self._known_symbols.add(sym)
             if del_ann:
                 for sym in del_ann:
                     self._known_symbols.discard(sym)
-
             if not self._initialized:
                 if current:
                     self._known_symbols = current
                 self._initialized = True
                 logger.info(f"Binance init: {len(self._known_symbols)} symbols")
                 return {"new": sorted(new_ann or []), "delisted": sorted(del_ann or [])}
-
             new_listings = list(new_ann or [])
             delistings = list(del_ann or [])
             if current:
                 new_listings += sorted(current - self._known_symbols)
                 delistings += sorted(self._known_symbols - current)
                 self._known_symbols = current
-
             return {
                 "new": sorted(set(new_listings)),
                 "delisted": sorted(set(delistings)),
