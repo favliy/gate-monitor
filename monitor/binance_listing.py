@@ -31,47 +31,55 @@ class BinanceListingMonitor:
                 resp.raise_for_status()
                 data = resp.json()
                 symbols = set()
+                count = 0
                 for s in data.get("symbols", []):
                     if (s.get("quoteAsset") == "USDT"
                             and s.get("contractType") == "PERPETUAL"
                             and s.get("status") == "TRADING"):
                         symbols.add(s["symbol"])
-                logger.info(f"Binance fetch OK: {len(symbols)} symbols (attempt {attempt})")
+                        count += 1
+                logger.info(f"Binance fetch OK: {count} symbols (attempt {attempt})")
                 return symbols
             except Exception as e:
                 logger.warning(f"Binance fetch attempt {attempt}/3: {e}")
+                self._last_error = str(e)[:100]
                 if attempt < 3:
                     time.sleep(5)
-        logger.error(f"Binance fetch FAILED after 3 attempts")
-        self._last_error = str(e)[:100]
+        logger.error("Binance fetch FAILED after 3 attempts")
         return set()
 
     def check(self):
         """Check for new listings and delistings.
         Returns dict with 'new' and 'delisted' lists, or None if not ready."""
-        now = time.time()
-        if now - self._last_check < self.CHECK_INTERVAL:
+        try:
+            now = time.time()
+            if now - self._last_check < self.CHECK_INTERVAL:
+                return None
+
+            current = self._fetch_symbols()
+            self._last_check = now
+
+            if not current:
+                return None
+
+            if not self._initialized:
+                self._known_symbols = current
+                self._initialized = True
+                logger.info(f"Binance listing monitor initialized: {len(current)} USDT perpetuals")
+                return {"new": [], "delisted": []}
+
+            new_listings = current - self._known_symbols
+            delistings = self._known_symbols - current
+
+            if new_listings or delistings:
+                self._known_symbols = current
+
+            return {
+                "new": sorted(new_listings),
+                "delisted": sorted(delistings),
+            }
+        except Exception as e:
+            logger.error(f"Binance check exception: {e}")
+            self._last_error = str(e)[:100]
+            self._last_check = time.time()
             return None
-
-        current = self._fetch_symbols()
-        self._last_check = now
-
-        if not current:
-            return None
-
-        if not self._initialized:
-            self._known_symbols = current
-            self._initialized = True
-            logger.info(f"Binance listing monitor initialized: {len(current)} USDT perpetuals")
-            return {"new": [], "delisted": []}
-
-        new_listings = current - self._known_symbols
-        delistings = self._known_symbols - current
-
-        if new_listings or delistings:
-            self._known_symbols = current
-
-        return {
-            "new": sorted(new_listings),
-            "delisted": sorted(delistings),
-        }
