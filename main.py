@@ -61,6 +61,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                 f"binance_init={app.binance_listing._initialized}",
                 f"binance_symbols={len(app.binance_listing._known_symbols)}",
                 f"binance_last={int(time.time() - app.binance_listing._last_check)}s_ago",
+                f"binance_err={app.binance_listing._last_error}",
             ]
             self.wfile.write("\n".join(lines).encode())
         else:

@@ -6,6 +6,11 @@ logger = logging.getLogger(__name__)
 
 BINANCE_EXCHANGE_INFO = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+}
+
 
 class BinanceListingMonitor:
     """Monitor Binance USDT perpetual futures for new listings and delistings."""
@@ -16,23 +21,30 @@ class BinanceListingMonitor:
         self._known_symbols = set()
         self._initialized = False
         self._last_check = 0
+        self._last_error = ""
 
     def _fetch_symbols(self):
         """Fetch all currently active USDT perpetual symbols from Binance."""
-        try:
-            resp = requests.get(BINANCE_EXCHANGE_INFO, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            symbols = set()
-            for s in data.get("symbols", []):
-                if (s.get("quoteAsset") == "USDT"
-                        and s.get("contractType") == "PERPETUAL"
-                        and s.get("status") == "TRADING"):
-                    symbols.add(s["symbol"])
-            return symbols
-        except Exception as e:
-            logger.error(f"Binance listing fetch error: {e}")
-            return set()
+        for attempt in range(1, 4):
+            try:
+                resp = requests.get(BINANCE_EXCHANGE_INFO, headers=HEADERS, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                symbols = set()
+                for s in data.get("symbols", []):
+                    if (s.get("quoteAsset") == "USDT"
+                            and s.get("contractType") == "PERPETUAL"
+                            and s.get("status") == "TRADING"):
+                        symbols.add(s["symbol"])
+                logger.info(f"Binance fetch OK: {len(symbols)} symbols (attempt {attempt})")
+                return symbols
+            except Exception as e:
+                logger.warning(f"Binance fetch attempt {attempt}/3: {e}")
+                if attempt < 3:
+                    time.sleep(5)
+        logger.error(f"Binance fetch FAILED after 3 attempts")
+        self._last_error = str(e)[:100]
+        return set()
 
     def check(self):
         """Check for new listings and delistings.
