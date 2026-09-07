@@ -166,8 +166,19 @@ class MonitorApp:
         self._hot_perp_symbols = set()  # Binance USDT perpetual set for hot scan
         self._hot_perp_loaded = False
         
-    def _send(self, text):
+    def _in_binance(self, symbol: str) -> bool:
+        """Return True only if symbol is in the Binance monitor pool."""
+        if not symbol:
+            return True  # non-symbol notifications (e.g. startup) allowed
+        try:
+            return self.fetcher.get_ticker(symbol) is not None
+        except Exception:
+            return False
+
+    def _send(self, text, symbol=None):
         if self.telegram.enabled and text:
+            if symbol is not None and not self._in_binance(symbol):
+                return
             try:
                 ok = self.telegram.send_message(text)
                 if ok: self.health_guard.feed_tg_ok()
@@ -267,7 +278,7 @@ class MonitorApp:
                             continue
                         self._last_alert[contract] = now
                         direction = "拉升" if pct > 0 else "下跌"
-                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}")
+                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}", symbol=contract)
                         logger.info(f"HOT_1M {contract} {pct:+.1f}% (24h+{chg:.0f}%)")
             if found > 0:
                 logger.debug(f"Hot scan: {found} candidates with 24h>=20%")
@@ -332,7 +343,7 @@ class MonitorApp:
                         "📈 *" + sym + " 拉升 +" + str(round(p["pump_pct"], 1)) + "%*\n"
                         "💹 " + str(p["current_price"]) + " | 1min +" + str(round(p["pump_pct"], 1)) + "% | 量" + str(round(vol_m)) + "M"
                     )
-                    self._send(msg)
+                    self._send(msg, symbol=sym)
 
                 for d in dumps:
                     sym = d["symbol"]
@@ -344,7 +355,7 @@ class MonitorApp:
                         "📉 *" + sym + " 下跌 " + str(round(d["drop_pct"], 1)) + "%*\n"
                         "💹 " + str(d["current_price"]) + " | 1min " + str(round(d["drop_pct"], 1)) + "% | 量" + str(round(vol_m)) + "M"
                     )
-                    self._send(msg)
+                    self._send(msg, symbol=sym)
 
                 # ── 5min pump/dump ──
                 pumps_5m = self.pump_detector.check_5m_pumps(tickers)
@@ -354,7 +365,7 @@ class MonitorApp:
                         continue
                     self._last_alert[sym] = now
                     vm = p.get("volume", 0) / 1_000_000
-                    self._send("🔥 *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M")
+                    self._send("🔥 *" + sym + " 5m +" + str(round(p["pct"], 1)) + "% | " + str(p["price"]) + " | " + str(round(vm)) + "M", symbol=sym)
                     logger.info("PUMP5 " + sym + " +" + str(round(p["pct"], 2)) + "%")
 
                 dumps_5m = self.dump_detector.check_5m_dumps(tickers)
@@ -364,7 +375,7 @@ class MonitorApp:
                         continue
                     self._last_alert[sym] = now
                     vm = d.get("volume", 0) / 1_000_000
-                    self._send("📉 *" + sym + " 5m " + str(round(d["pct"], 1)) + "% | " + str(d["price"]) + " | " + str(round(vm)) + "M")
+                    self._send("📉 *" + sym + " 5m " + str(round(d["pct"], 1)) + "% | " + str(d["price"]) + " | " + str(round(vm)) + "M", symbol=sym)
                     logger.info("DUMP5 " + sym + " " + str(round(d["pct"], 2)) + "%")
 
                 # ── Hot-coin scan (independent, every 30s) ──
@@ -377,11 +388,11 @@ class MonitorApp:
                 if result:
                     for sym in result.get("new", []):
                         base = sym.replace("USDT", "_USDT")
-                        self._send("\U0001f195 *\u5e01\u5b89\u4e0a\u65b0* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4e0a\u7ebf\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6")
+                        self._send("\U0001f195 *\u5e01\u5b89\u4e0a\u65b0* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4e0a\u7ebf\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6", symbol=_to_local(sym))
                         logger.info(f"BINANCE_NEW {sym}")
                     for sym in result.get("delisted", []):
                         base = sym.replace("USDT", "_USDT")
-                        self._send("\U0001f53b *\u5e01\u5b89\u4e0b\u67b6* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4ece\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6\u4e0b\u67b6")
+                        self._send("\U0001f53b *\u5e01\u5b89\u4e0b\u67b6* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4ece\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6\u4e0b\u67b6", symbol=_to_local(sym))
                         logger.info(f"BINANCE_DELIST {sym}")
 
                 # ── 60s: OI ──
@@ -399,7 +410,7 @@ class MonitorApp:
                             self._last_oi_alert[sym] = now
                             self._send(
                                 f"⚡ *{sym} OI异动*\n"
-                                f"5min：{s['oi_change_pct']}%｜OI：{s['current_oi']/1e6:.1f}M")
+                                f"5min：{s['oi_change_pct']}%｜OI：{s['current_oi']/1e6:.1f}M", symbol=sym)
                             logger.info(f"OI {sym} +{round(s['oi_change_pct'],2)}%")
                     self._last_oi_fetch = now
 
