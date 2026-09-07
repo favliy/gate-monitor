@@ -65,8 +65,6 @@ class GateFuturesFetcher:
             if not contract.endswith("_USDT"):
                 continue
             volume = float(t.get("volume_24h_quote", 0))
-            if volume < 4500000:
-                continue
             tickers[contract] = {
                 "price": float(t.get("last", 0)),
                 "volume": volume,
@@ -78,7 +76,7 @@ class GateFuturesFetcher:
             }
             matched += 1
 
-        logger.info(f"{matched} Gate.io USDT contracts (vol >= 4.5M USDT)")
+        logger.info(f"{matched} Gate.io USDT contracts (all)")
         return tickers
 
     def _fetch_prices(self) -> dict:
@@ -131,8 +129,7 @@ class GateFuturesFetcher:
                 contract = t.get("contract", "")
                 if not contract.endswith("_USDT"):
                     continue
-                if float(t.get("volume_24h_quote", 0)) >= 4500000:
-                    new_symbols.add(contract)
+                new_symbols.add(contract)
             added = new_symbols - self._whitelist_symbols
             if added:
                 logger.info(f"Whitelist refresh: added {len(added)} new contracts")

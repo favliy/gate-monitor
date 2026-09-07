@@ -124,8 +124,6 @@ class BinanceFuturesFetcher:
             if not t:
                 continue
             volume = float(t.get("quoteVolume", 0) or 0)
-            if volume < self.MIN_VOLUME:
-                continue
             local_sym = _to_local(sym)
             tickers[local_sym] = {
                 "price": float(t.get("lastPrice", 0) or 0),
@@ -138,7 +136,7 @@ class BinanceFuturesFetcher:
             }
             matched += 1
 
-        logger.info(f"{matched} Binance USDT perp contracts (quoteVolume >= {self.MIN_VOLUME})")
+        logger.info(f"{matched} Binance USDT perp contracts (all)")
         return tickers
 
     def _fetch_prices(self) -> dict:
@@ -212,8 +210,7 @@ class BinanceFuturesFetcher:
                 t = ticker_by_symbol.get(sym)
                 if not t:
                     continue
-                if float(t.get("quoteVolume", 0) or 0) >= self.MIN_VOLUME:
-                    new_symbols.add(_to_local(sym))
+                new_symbols.add(_to_local(sym))
 
             added = new_symbols - self._whitelist_symbols
             removed = self._whitelist_symbols - new_symbols

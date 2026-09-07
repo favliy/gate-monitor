@@ -265,7 +265,7 @@ class MonitorApp:
                 if not contract.endswith("_USDT"):
                     continue
                 chg = float(t.get("change_percentage", 0) or 0)
-                if chg < 20:
+                if chg < 10:
                     continue
                 found += 1
                 price = float(t.get("last", 0) or 0)
@@ -295,7 +295,7 @@ class MonitorApp:
                     old_price = hist[0][1]
                 if old_price and old_price > 0:
                     pct = ((price - old_price) / old_price) * 100
-                    if abs(pct) >= 2:
+                    if abs(pct) >= 1:
                         # Unified dedup
                         if now - self._last_alert.get(contract, 0) < 300:
                             continue

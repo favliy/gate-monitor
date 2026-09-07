@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class PumpDetector:
     """Detect pumps: symbols that rose > threshold_pct within 1 minute."""
 
-    def __init__(self, threshold_pct: float = 2.0):
+    def __init__(self, threshold_pct: float = 1.0):
         self.threshold_pct = threshold_pct
         self._price_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_pumps: Dict[str, dict] = {}
@@ -101,7 +101,7 @@ class PumpDetector:
             if old_price is None or old_price <= 0:
                 continue
             pct = ((price - old_price) / old_price) * 100
-            if pct >= 3.5:  # 5min threshold
+            if pct >= 2.0:  # 5min threshold
                 pumps.append({
                     "symbol": sym, "pct": round(pct, 2),
                     "price": price, "old_price": round(old_price, 6),
@@ -118,7 +118,7 @@ class PumpDetector:
 class DumpDetector:
     """Detect dumps: symbols that dropped > threshold_pct within 1 minute."""
 
-    def __init__(self, threshold_pct: float = 2.0):
+    def __init__(self, threshold_pct: float = 1.0):
         self.threshold_pct = threshold_pct
         self._price_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_dumps: Dict[str, dict] = {}
@@ -194,7 +194,7 @@ class DumpDetector:
             if old_price is None or old_price <= 0:
                 continue
             pct = ((price - old_price) / old_price) * 100
-            if pct <= -3.5:  # 5min threshold
+            if pct <= -2.0:  # 5min threshold
                 dumps.append({
                     "symbol": sym, "pct": round(pct, 2),
                     "price": price, "old_price": round(old_price, 6),
@@ -211,7 +211,7 @@ class DumpDetector:
 class OIDetector:
     """Detect Open Interest spikes (5-minute window)."""
 
-    def __init__(self, oi_threshold_pct: float = 5.0):
+    def __init__(self, oi_threshold_pct: float = 3.0):
         self.oi_threshold_pct = oi_threshold_pct
         self._oi_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_spikes: Dict[str, dict] = {}
