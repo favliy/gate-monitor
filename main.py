@@ -55,6 +55,11 @@ class HealthHandler(BaseHTTPRequestHandler):
                 f"oi_spikes={len(app.oi_detector._current_spikes)}",
                 f"errors={app.health_guard.total_errors}",
                 f"tg_ok={app.telegram.enabled}",
+                f"whitelist={len(app._binance_symbols)}",
+                f"sent={app._sent_count}",
+                f"filtered={app._filtered_count}",
+                f"tg_fail={app._tg_fail_count}",
+                f"tg_last_err={app._last_tg_err}",
                 f"price_hist={sum(len(v) for v in app.pump_detector._price_history.values())}",
                 f"hot_hist={sum(len(v) for v in app._hot_price_history.values())}",
                 f"binance_init={app.binance_listing._initialized}",
@@ -165,6 +170,11 @@ class MonitorApp:
         self._hot_last_scan = 0
         # Binance contract whitelist (from local file) - used to gate notifications
         self._binance_symbols = self._load_binance_symbols()
+        self._sent_count = 0
+        self._filtered_count = 0
+        self._tg_fail_count = 0
+        self._last_tg_err = ""
+        self._whitelist_warned = False
 
         
     def _load_binance_symbols(self) -> set:
@@ -187,6 +197,8 @@ class MonitorApp:
                     syms.add(s)
         except Exception as e:
             logger.warning(f"binance_usdt_perps.txt load failed: {e}")
+        if not syms:
+            logger.error("binance_usdt_perps.txt loaded 0 symbols - Binance filter disabled")
         logger.info(f"Loaded {len(syms)} Binance symbols from binance_usdt_perps.txt")
         return syms
 
@@ -194,6 +206,11 @@ class MonitorApp:
         """Return True only if symbol maps to a Binance USDT perpetual."""
         if not symbol:
             return True  # non-symbol notifications (e.g. startup) allowed
+        if not self._binance_symbols:
+            if not getattr(self, "_whitelist_warned", False):
+                self._whitelist_warned = True
+                logger.error("Binance whitelist is EMPTY; falling back to notify-all")
+            return True
         # normalize BTC_USDT -> BTCUSDT
         norm = symbol.replace("_USDT", "USDT")
         return norm in self._binance_symbols
@@ -201,12 +218,19 @@ class MonitorApp:
     def _send(self, text, symbol=None):
         if self.telegram.enabled and text:
             if symbol is not None and not self._in_binance(symbol):
+                self._filtered_count += 1
                 return
             try:
                 ok = self.telegram.send_message(text)
-                if ok: self.health_guard.feed_tg_ok()
-                else: self.health_guard.feed_tg_fail()
+                if ok:
+                    self._sent_count += 1
+                    self.health_guard.feed_tg_ok()
+                else:
+                    self._tg_fail_count += 1
+                    self.health_guard.feed_tg_fail()
             except Exception as e:
+                self._tg_fail_count += 1
+                self._last_tg_err = str(e)[:120]
                 logger.error("TG: " + str(e))
                 self.health_guard.feed_tg_fail()
 
