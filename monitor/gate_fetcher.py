@@ -7,7 +7,7 @@ This module is no longer imported by main.py.
 import logging
 import threading
 import time
-from typing import Dict, Optional, Callable
+from typing import Dict, Optional, Callable, Set
 
 import requests
 

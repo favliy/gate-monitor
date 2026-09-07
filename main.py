@@ -16,7 +16,7 @@ from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
     PUMP_THRESHOLD_PCT, CHECK_INTERVAL_SECONDS,
 )
-from monitor.binance_fetcher import BinanceFuturesFetcher, _to_local
+from monitor.gate_fetcher import GateFuturesFetcher
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
 from monitor.telegram_sender import TelegramSender
 from monitor.binance_listing import BinanceListingMonitor
@@ -98,7 +98,7 @@ class HealthGuard:
     def _restart_fetcher(self):
         try:
             self.app.fetcher.stop(); time.sleep(3)
-            self.app.fetcher = BinanceFuturesFetcher()
+            self.app.fetcher = GateFuturesFetcher()
             self.app.fetcher.start()
             self.fetcher_restarts += 1
             self.consecutive_stale = 0
@@ -146,7 +146,7 @@ class HealthGuard:
 
 class MonitorApp:
     def __init__(self):
-        self.fetcher = BinanceFuturesFetcher()
+        self.fetcher = GateFuturesFetcher()
         self.pump_detector = PumpDetector(threshold_pct=PUMP_THRESHOLD_PCT)
         self.dump_detector = DumpDetector(threshold_pct=PUMP_THRESHOLD_PCT)
         self.oi_detector = OIDetector()
@@ -163,17 +163,40 @@ class MonitorApp:
         self._price_snap = {}
         self._hot_price_history = {}  # prices for coins not in main monitoring
         self._hot_last_scan = 0
-        self._hot_perp_symbols = set()  # Binance USDT perpetual set for hot scan
-        self._hot_perp_loaded = False
+        # Binance contract whitelist (from local file) - used to gate notifications
+        self._binance_symbols = self._load_binance_symbols()
+
         
+    def _load_binance_symbols(self) -> set:
+        """Load Binance USDT perpetual symbols from local whitelist file (encoding-tolerant)."""
+        syms = set()
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            raw = open(os.path.join(here, "binance_usdt_perps.txt"), "rb").read()
+            for enc in ("utf-8", "gb18030", "latin-1"):
+                try:
+                    text = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                text = raw.decode("utf-8", errors="replace")
+            for line in text.splitlines():
+                s = line.strip()
+                if s and s.endswith("USDT"):
+                    syms.add(s)
+        except Exception as e:
+            logger.warning(f"binance_usdt_perps.txt load failed: {e}")
+        logger.info(f"Loaded {len(syms)} Binance symbols from binance_usdt_perps.txt")
+        return syms
+
     def _in_binance(self, symbol: str) -> bool:
-        """Return True only if symbol is in the Binance monitor pool."""
+        """Return True only if symbol maps to a Binance USDT perpetual."""
         if not symbol:
             return True  # non-symbol notifications (e.g. startup) allowed
-        try:
-            return self.fetcher.get_ticker(symbol) is not None
-        except Exception:
-            return False
+        # normalize BTC_USDT -> BTCUSDT
+        norm = symbol.replace("_USDT", "USDT")
+        return norm in self._binance_symbols
 
     def _send(self, text, symbol=None):
         if self.telegram.enabled and text:
@@ -201,51 +224,27 @@ class MonitorApp:
     # ── Hot-coin 1min scan (independent API, no volume filter) ──
 
     def _scan_hot_1min(self):
-        """Fetch ALL Binance USDT perpetual tickers (no volume filter),
-        detect 24h>=20% + 1min>=2%. Maintains independent price history.
+        """Fetch ALL Gate.io USDT futures tickers (no volume filter),
+        detect 24h>=20% + 1min>=2%. Only notifies if the contract is on Binance.
         Symbols stored in local BTC_USDT form. Shared dedup with main alerts."""
         try:
             resp = requests.get(
-                "https://fapi.binance.com/fapi/v1/ticker/24hr",
+                "https://api.gateio.ws/api/v4/futures/usdt/tickers",
                 headers={"User-Agent": "Mozilla/5.0"},
                 timeout=15,
             )
             resp.raise_for_status()
             now = time.time()
-
-            # Load USDT perpetual symbol set once, then reuse
-            if not self._hot_perp_loaded:
-                try:
-                    ex = requests.get(
-                        "https://fapi.binance.com/fapi/v1/exchangeInfo",
-                        headers={"User-Agent": "Mozilla/5.0"},
-                        timeout=15,
-                    ).json()
-                    self._hot_perp_symbols = {
-                        s["symbol"] for s in ex.get("symbols", [])
-                        if s.get("quoteAsset") == "USDT"
-                        and s.get("contractType") == "PERPETUAL"
-                        and s.get("status") == "TRADING"
-                    }
-                    self._hot_perp_loaded = True
-                    logger.debug(f"Hot scan perp set loaded: {len(self._hot_perp_symbols)}")
-                except Exception:
-                    self._hot_perp_symbols = None
-                    self._hot_perp_loaded = True
-
             found = 0
             for t in resp.json():
-                sym = t.get("symbol", "")
-                if self._hot_perp_symbols is not None and sym not in self._hot_perp_symbols:
+                contract = t.get("contract", "")
+                if not contract.endswith("_USDT"):
                     continue
-                if not sym.endswith("USDT"):
-                    continue
-                contract = _to_local(sym)
-                chg = float(t.get("priceChangePercent", 0) or 0)
+                chg = float(t.get("change_percentage", 0) or 0)
                 if chg < 20:
                     continue
                 found += 1
-                price = float(t.get("lastPrice", 0) or 0)
+                price = float(t.get("last", 0) or 0)
                 if price <= 0:
                     continue
                 # Track price history
@@ -277,13 +276,14 @@ class MonitorApp:
                         if now - self._last_alert.get(contract, 0) < 300:
                             continue
                         self._last_alert[contract] = now
-                        direction = "拉升" if pct > 0 else "下跌"
-                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}", symbol=contract)
+                        direction = "??" if pct > 0 else "??"
+                        self._send(f"?? *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}", symbol=contract)
                         logger.info(f"HOT_1M {contract} {pct:+.1f}% (24h+{chg:.0f}%)")
             if found > 0:
                 logger.debug(f"Hot scan: {found} candidates with 24h>=20%")
         except Exception as e:
             logger.debug(f"Hot 1min scan error: {e}")
+
 
     # ── Main loop ──
 
@@ -388,11 +388,11 @@ class MonitorApp:
                 if result:
                     for sym in result.get("new", []):
                         base = sym.replace("USDT", "_USDT")
-                        self._send("\U0001f195 *\u5e01\u5b89\u4e0a\u65b0* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4e0a\u7ebf\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6", symbol=_to_local(sym))
+                        self._send("\U0001f195 *\u5e01\u5b89\u4e0a\u65b0* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4e0a\u7ebf\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6", symbol=sym)
                         logger.info(f"BINANCE_NEW {sym}")
                     for sym in result.get("delisted", []):
                         base = sym.replace("USDT", "_USDT")
-                        self._send("\U0001f53b *\u5e01\u5b89\u4e0b\u67b6* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4ece\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6\u4e0b\u67b6", symbol=_to_local(sym))
+                        self._send("\U0001f53b *\u5e01\u5b89\u4e0b\u67b6* " + base + "\n\u5408\u7ea6 " + sym + " \u5df2\u4ece\u5e01\u5b89\u6c38\u7eed\u5408\u7ea6\u4e0b\u67b6", symbol=sym)
                         logger.info(f"BINANCE_DELIST {sym}")
 
                 # ── 60s: OI ──
