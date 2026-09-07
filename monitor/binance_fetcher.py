@@ -24,22 +24,18 @@ def _to_local(symbol: str) -> str:
 class BinanceFuturesFetcher:
     """Fetch USDT perpetual futures from Binance, filtered to Binance USDT contracts."""
 
-    # Endpoints (fallback order: fapi -> fstream)
+    # Endpoints (fapi primary; fstream is NOT a REST host) 
     TICKERS_URLS = [
         "https://fapi.binance.com/fapi/v1/ticker/24hr",
-        "https://fstream.binance.com/fapi/v1/ticker/24hr",
     ]
     PREMIUM_URLS = [
         "https://fapi.binance.com/fapi/v1/premiumIndex",
-        "https://fstream.binance.com/fapi/v1/premiumIndex",
     ]
     EXCHANGE_INFO_URLS = [
         "https://fapi.binance.com/fapi/v1/exchangeInfo",
-        "https://fstream.binance.com/fapi/v1/exchangeInfo",
     ]
     OI_URLS = [
         "https://fapi.binance.com/fapi/v1/openInterest",
-        "https://fstream.binance.com/fapi/v1/openInterest",
     ]
 
     MIN_VOLUME = 4_500_000  # USDT 24h quote volume
@@ -81,22 +77,24 @@ class BinanceFuturesFetcher:
         return session
 
     def _get_first(self, urls: list, timeout: int = 20, **kwargs) -> requests.Response:
-        """Try each URL, returning first successful (non-451) response."""
-        last_err = None
+        """Try each URL, returning first acceptable response. Logs per-endpoint status."""
+        errors = []
         for url in urls:
             try:
                 resp = self._session.get(url, timeout=timeout, **kwargs)
-                if resp.status_code == 451:  # geo-restricted
+                if resp.status_code in (403, 451):  # banned / geo-restricted
+                    logger.warning(f"Endpoint blocked {url} -> {resp.status_code}")
+                    errors.append(f"{url} HTTP {resp.status_code}")
                     continue
                 resp.raise_for_status()
                 return resp
             except Exception as e:
-                last_err = e
-                logger.debug(f"Endpoint {url} failed: {e}")
-        if last_err:
-            raise last_err
-        raise RuntimeError("All endpoints failed")
-
+                msg = f"{url} -> {type(e).__name__}: {str(e)[:120]}"
+                logger.warning(f"Endpoint failed {msg}")
+                errors.append(msg)
+        if errors:
+            raise RuntimeError("All Binance endpoints failed: " + "; ".join(errors))
+        raise RuntimeError("All endpoints failed (no detail)")
     def _get_initial_tickers(self) -> dict:
         logger.info("Fetching tickers from Binance...")
         aliases = {"lastPrice": "price", "quoteVolume": "volume",
@@ -260,7 +258,22 @@ class BinanceFuturesFetcher:
     def start(self, on_update: Callable = None):
         self._on_update = on_update
         self._session = self._make_session()
-        tickers = self._get_initial_tickers()
+        # Initial fetch with retry: Binance may be transiently blocked on cloud IPs.
+        # Keep retrying with backoff instead of crashing the whole monitor.
+        tickers = {}
+        attempt = 0
+        max_attempts = 30
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                tickers = self._get_initial_tickers()
+                if tickers:
+                    break
+            except Exception as e:
+                logger.warning(f"Init attempt {attempt}/{max_attempts} failed: {str(e)[:160]}")
+            time.sleep(min(10 * attempt, 60))
+        if not tickers:
+            raise RuntimeError("Unable to initialize Binance data after retries")
         self._whitelist_symbols = set(tickers.keys())
         with self._lock:
             self._tickers = tickers
@@ -268,7 +281,6 @@ class BinanceFuturesFetcher:
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
         logger.info(f"BinanceFuturesFetcher started, monitoring {len(tickers)} contracts")
-
     def stop(self):
         self._running = False
         if self._session:
