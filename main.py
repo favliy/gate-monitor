@@ -295,7 +295,7 @@ class MonitorApp:
                     old_price = hist[0][1]
                 if old_price and old_price > 0:
                     pct = ((price - old_price) / old_price) * 100
-                    if abs(pct) >= 1:
+                    if abs(pct) >= 1.5:
                         # Unified dedup
                         if now - self._last_alert.get(contract, 0) < 300:
                             continue

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class PumpDetector:
     """Detect pumps: symbols that rose > threshold_pct within 1 minute."""
 
-    def __init__(self, threshold_pct: float = 1.0):
+    def __init__(self, threshold_pct: float = 1.5):
         self.threshold_pct = threshold_pct
         self._price_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_pumps: Dict[str, dict] = {}
@@ -118,7 +118,7 @@ class PumpDetector:
 class DumpDetector:
     """Detect dumps: symbols that dropped > threshold_pct within 1 minute."""
 
-    def __init__(self, threshold_pct: float = 1.0):
+    def __init__(self, threshold_pct: float = 1.5):
         self.threshold_pct = threshold_pct
         self._price_history: Dict[str, List[tuple]] = defaultdict(list)
         self._current_dumps: Dict[str, dict] = {}
