@@ -276,8 +276,8 @@ class MonitorApp:
                         if now - self._last_alert.get(contract, 0) < 300:
                             continue
                         self._last_alert[contract] = now
-                        direction = "??" if pct > 0 else "??"
-                        self._send(f"?? *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}", symbol=contract)
+                        direction = "拉升" if pct > 0 else "下跌"
+                        self._send(f"🔥 *{contract} 24h+{chg:.0f}% 1min{direction}{abs(pct):.1f}% | {price}", symbol=contract)
                         logger.info(f"HOT_1M {contract} {pct:+.1f}% (24h+{chg:.0f}%)")
             if found > 0:
                 logger.debug(f"Hot scan: {found} candidates with 24h>=20%")
