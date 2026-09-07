@@ -1,3 +1,9 @@
+"""
+DEPRECATED / kept for reference only.
+The live data source is Binance (see monitor/binance_fetcher.py).
+This module is no longer imported by main.py.
+"""
+
 import logging
 import time
 import requests

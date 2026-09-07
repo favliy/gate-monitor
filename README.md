@@ -1,10 +1,10 @@
 ﻿# Gate.io Futures Monitor 合约异动监控
 
-监控 Gate.io USDT 永续合约（过滤到 Binance 已上线品种），检测 1 分钟内涨/跌幅 >= 2% 的合约，实时 Telegram 告警 + 每 5 分钟汇总报告。
+监控 Binance USDT 永续合约（成交额过滤），检测 1 分钟内涨/跌幅 >= 2% 的合约，实时 Telegram 告警 + 每 5 分钟汇总报告。
 
 ## 功能
 
-- 📡 实时监控 Gate.io USDT 永续合约（REST API 轮询）
+- 📡 实时监控 Binance USDT 永续合约（REST API 轮询）
 - 📊 仅监控 24h 成交额 >= 450万 USDT 的合约
 - 📈 1 分钟涨/跌幅 >= 2% 自动记录 + Telegram 即时告警
 - 📉 5 分钟 OI 变化 >= 5% 异动检测
@@ -98,7 +98,9 @@ bash deploy.sh   # 自动安装 systemd 服务
 ├── requirements.txt             # 依赖
 ├── binance_usdt_perps.txt       # Binance 合约白名单
 ├── monitor/
-│   ├── gate_fetcher.py          # Gate.io 数据抓取
+│   ├── binance_fetcher.py       # Binance 数据抓取(当前数据源）
+│   ├── gate_fetcher.py          # Gate.io 数据抓取(DEPRECATED/弃用，仅保留）
+│   ├── whale_monitor.py         # 鲸鱼监控(DEPRECATED/弃用，仅保留）
 │   ├── detector.py              # Pump/Dump/OI 检测
 │   ├── reporter.py              # 报告格式化
 │   ├── telegram_sender.py       # Telegram Bot 发送

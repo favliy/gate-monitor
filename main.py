@@ -16,10 +16,9 @@ from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
     PUMP_THRESHOLD_PCT, CHECK_INTERVAL_SECONDS,
 )
-from monitor.gate_fetcher import GateFuturesFetcher
+from monitor.binance_fetcher import BinanceFuturesFetcher, _to_local
 from monitor.detector import PumpDetector, DumpDetector, OIDetector
 from monitor.telegram_sender import TelegramSender
-from monitor.whale_monitor import WhaleMonitor
 from monitor.binance_listing import BinanceListingMonitor
 
 logging.basicConfig(
@@ -99,7 +98,7 @@ class HealthGuard:
     def _restart_fetcher(self):
         try:
             self.app.fetcher.stop(); time.sleep(3)
-            self.app.fetcher = GateFuturesFetcher()
+            self.app.fetcher = BinanceFuturesFetcher()
             self.app.fetcher.start()
             self.fetcher_restarts += 1
             self.consecutive_stale = 0
@@ -147,12 +146,11 @@ class HealthGuard:
 
 class MonitorApp:
     def __init__(self):
-        self.fetcher = GateFuturesFetcher()
+        self.fetcher = BinanceFuturesFetcher()
         self.pump_detector = PumpDetector(threshold_pct=PUMP_THRESHOLD_PCT)
         self.dump_detector = DumpDetector(threshold_pct=PUMP_THRESHOLD_PCT)
         self.oi_detector = OIDetector()
         self.telegram = TelegramSender(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
-        self.whale_monitor = WhaleMonitor()
         self.binance_listing = BinanceListingMonitor()
         self.health_guard = HealthGuard(self)
         self._running = True
@@ -165,6 +163,8 @@ class MonitorApp:
         self._price_snap = {}
         self._hot_price_history = {}  # prices for coins not in main monitoring
         self._hot_last_scan = 0
+        self._hot_perp_symbols = set()  # Binance USDT perpetual set for hot scan
+        self._hot_perp_loaded = False
         
     def _send(self, text):
         if self.telegram.enabled and text:
@@ -190,22 +190,51 @@ class MonitorApp:
     # ── Hot-coin 1min scan (independent API, no volume filter) ──
 
     def _scan_hot_1min(self):
-        """Fetch ALL USDT futures tickers (no volume filter), detect 24h>=20% + 1min>=2%.
-        Maintains independent price history. Shared dedup with main alerts."""
+        """Fetch ALL Binance USDT perpetual tickers (no volume filter),
+        detect 24h>=20% + 1min>=2%. Maintains independent price history.
+        Symbols stored in local BTC_USDT form. Shared dedup with main alerts."""
         try:
-            resp = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=15)
+            resp = requests.get(
+                "https://fapi.binance.com/fapi/v1/ticker/24hr",
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+            )
             resp.raise_for_status()
             now = time.time()
+
+            # Load USDT perpetual symbol set once, then reuse
+            if not self._hot_perp_loaded:
+                try:
+                    ex = requests.get(
+                        "https://fapi.binance.com/fapi/v1/exchangeInfo",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                        timeout=15,
+                    ).json()
+                    self._hot_perp_symbols = {
+                        s["symbol"] for s in ex.get("symbols", [])
+                        if s.get("quoteAsset") == "USDT"
+                        and s.get("contractType") == "PERPETUAL"
+                        and s.get("status") == "TRADING"
+                    }
+                    self._hot_perp_loaded = True
+                    logger.debug(f"Hot scan perp set loaded: {len(self._hot_perp_symbols)}")
+                except Exception:
+                    self._hot_perp_symbols = None
+                    self._hot_perp_loaded = True
+
             found = 0
             for t in resp.json():
-                contract = t.get("contract", "")
-                if not contract.endswith("_USDT"):
+                sym = t.get("symbol", "")
+                if self._hot_perp_symbols is not None and sym not in self._hot_perp_symbols:
                     continue
-                chg = float(t.get("change_percentage", 0))
+                if not sym.endswith("USDT"):
+                    continue
+                contract = _to_local(sym)
+                chg = float(t.get("priceChangePercent", 0) or 0)
                 if chg < 20:
                     continue
                 found += 1
-                price = float(t.get("last", 0))
+                price = float(t.get("lastPrice", 0) or 0)
                 if price <= 0:
                     continue
                 # Track price history
