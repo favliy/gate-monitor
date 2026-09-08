@@ -1,0 +1,19 @@
+# Telegram / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs + runtime capture / artifacts
+logs/
+*.log
+nohup.out
+*.pid
+monitor/alert_state.json
+_real2_out.txt
+_real2_err.txt
+
+# OS
+Thumbs.db
+.DS_Store
