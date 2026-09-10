@@ -341,9 +341,11 @@ class MonitorApp:
                     continue
 
                 self.health_guard.feed_data()
-                # Keep-alive
+                # Keep-alive (ping this service's own public URL so Render does not idle-spin-down)
                 try:
-                    requests.get("https://gate-monitor-1.onrender.com/", timeout=5)
+                    self_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+                    if self_url:
+                        requests.get(self_url + "/", timeout=5)
                 except Exception:
                     pass
 
